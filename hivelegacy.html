@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hive Legacy — Archive Your Hive History</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Special+Elite&family=Courier+Prime:wght@400;700&family=Lora:ital,wght@0,400;0,600;1,400&display=swap');
+
+  :root{
+    --manila: #d9c7a0;
+    --manila-dark: #c7b285;
+    --card: #f3ecd8;
+    --ink: #22201b;
+    --ink-soft: #4a453b;
+    --stamp: #9b3a3a;
+    --stamp-dark: #7a2c2c;
+    --brass: #8c6a3f;
+    --verified: #4c6b4c;
+    --rule: rgba(34,32,27,0.18);
+  }
+
+  *{ box-sizing: border-box; }
+
+  body{
+    margin:0;
+    background: var(--manila);
+    background-image:
+      repeating-linear-gradient(0deg, rgba(0,0,0,0.015) 0px, rgba(0,0,0,0.015) 1px, transparent 1px, transparent 3px);
+    color: var(--ink);
+    font-family: 'Lora', serif;
+    min-height: 100vh;
+    padding: 40px 20px 80px;
+  }
+
+  .wrap{ max-width: 760px; margin: 0 auto; }
+
+  header.masthead{
+    text-align:center;
+    margin-bottom: 36px;
+    position: relative;
+  }
+  header.masthead .eyebrow{
+    font-family: 'Courier Prime', monospace;
+    letter-spacing: 0.25em;
+    font-size: 11px;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+  }
+  header.masthead h1{
+    font-family: 'Special Elite', cursive;
+    font-size: 42px;
+    margin: 6px 0 4px;
+    letter-spacing: 0.02em;
+  }
+  header.masthead p.tag{
+    font-family: 'Courier Prime', monospace;
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+  header.masthead .rule{
+    width: 100%;
+    border: none;
+    border-top: 2px solid var(--ink);
+    border-bottom: 1px solid var(--ink);
+    height: 4px;
+    margin-top: 18px;
+  }
+
+  .card{
+    background: var(--card);
+    border: 1px solid var(--rule);
+    box-shadow: 0 1px 0 var(--rule), 0 8px 20px -12px rgba(0,0,0,0.35);
+    padding: 26px 28px;
+    margin-bottom: 22px;
+    position: relative;
+  }
+  .card::before{
+    content:"";
+    position:absolute; top:0; left:22px; right:22px; height:2px;
+    background: repeating-linear-gradient(90deg, var(--brass) 0 6px, transparent 6px 12px);
+    opacity:0.55;
+  }
+
+  .field-label{
+    font-family:'Courier Prime', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--brass);
+    display:block;
+    margin-bottom: 8px;
+  }
+
+  .lookup-row{
+    display:flex;
+    gap: 10px;
+  }
+  input[type="text"]{
+    flex:1;
+    font-family:'Courier Prime', monospace;
+    font-size: 16px;
+    padding: 11px 12px;
+    border: 1px solid var(--ink);
+    background: #fffdf6;
+    color: var(--ink);
+  }
+  input[type="text"]:focus{ outline: 2px solid var(--stamp); outline-offset: 1px; }
+
+  button{
+    font-family:'Courier Prime', monospace;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 11px 18px;
+    background: var(--ink);
+    color: var(--card);
+    border: 1px solid var(--ink);
+    cursor: pointer;
+    transition: transform 0.05s ease, background 0.15s ease;
+  }
+  button:hover:not(:disabled){ background: var(--stamp-dark); border-color: var(--stamp-dark); }
+  button:active:not(:disabled){ transform: translateY(1px); }
+  button:disabled{ opacity:0.4; cursor:not-allowed; }
+  button.secondary{
+    background: transparent;
+    color: var(--ink);
+  }
+  button.secondary:hover:not(:disabled){ background: rgba(34,32,27,0.08); color: var(--ink); }
+
+  .error-line{
+    font-family:'Courier Prime', monospace;
+    font-size: 13px;
+    color: var(--stamp-dark);
+    margin-top: 10px;
+  }
+
+  .preview{ display:none; }
+  .preview.show{ display:block; }
+
+  .preview-head{
+    display:flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .preview-head h2{
+    font-family: 'Special Elite', cursive;
+    font-size: 22px;
+    margin:0;
+  }
+  .stamp-chip{
+    font-family:'Courier Prime', monospace;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--verified);
+    border: 1px solid var(--verified);
+    padding: 3px 8px;
+    transform: rotate(-2deg);
+  }
+
+  .stats-grid{
+    display:grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px,1fr));
+    gap: 14px;
+    margin: 16px 0 20px;
+  }
+  .stat{
+    border-left: 2px solid var(--brass);
+    padding-left: 10px;
+  }
+  .stat .num{
+    font-family:'Courier Prime', monospace;
+    font-size: 24px;
+    font-weight: 700;
+  }
+  .stat .lbl{
+    font-family:'Courier Prime', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-soft);
+  }
+
+  .note{
+    font-size: 13px;
+    color: var(--ink-soft);
+    font-style: italic;
+    line-height:1.5;
+    margin: 0 0 18px;
+  }
+
+  .progress-wrap{
+    display:none;
+    margin: 14px 0;
+  }
+  .progress-wrap.show{ display:block; }
+  .progress-track{
+    height: 10px;
+    background: rgba(34,32,27,0.1);
+    border: 1px solid var(--ink);
+  }
+  .progress-fill{
+    height: 100%;
+    width: 0%;
+    background: repeating-linear-gradient(45deg, var(--brass) 0 6px, var(--stamp) 6px 12px);
+    transition: width 0.2s ease;
+  }
+  .progress-label{
+    font-family:'Courier Prime', monospace;
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top: 6px;
+  }
+
+  .result{
+    display:none;
+    text-align:center;
+    padding: 30px 20px;
+  }
+  .result.show{ display:block; }
+  .result .stamp{
+    display:inline-block;
+    font-family: 'Special Elite', cursive;
+    font-size: 26px;
+    color: var(--stamp);
+    border: 3px double var(--stamp);
+    padding: 10px 26px;
+    transform: rotate(-4deg);
+    letter-spacing: 0.08em;
+    margin-bottom: 16px;
+  }
+  .result p{ color: var(--ink-soft); font-size: 13px; font-family:'Courier Prime', monospace; }
+
+  .btn-row{ display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top: 14px; }
+
+  footer{
+    text-align:center;
+    font-family:'Courier Prime', monospace;
+    font-size: 11px;
+    color: var(--ink-soft);
+    margin-top: 40px;
+    letter-spacing: 0.05em;
+  }
+
+  @media (max-width: 480px){
+    header.masthead h1{ font-size: 30px; }
+    .card{ padding: 20px; }
+    .lookup-row{ flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Preservation &amp; Discovery Index</div>
+    <h1>Hive Legacy</h1>
+    <p class="tag">// the blockchain is the vault — this is the catalog card</p>
+    <hr class="rule">
+  </header>
+
+  <div class="card">
+    <span class="field-label">Hive Account</span>
+    <div class="lookup-row">
+      <input type="text" id="usernameInput" placeholder="username (no @)" autocomplete="off" spellcheck="false">
+      <button id="lookupBtn">Look Up</button>
+    </div>
+    <div id="lookupError" class="error-line" style="display:none;"></div>
+  </div>
+
+  <div class="card preview" id="previewCard">
+    <div class="preview-head">
+      <h2 id="previewName">@username</h2>
+      <span class="stamp-chip">On Chain</span>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat">
+        <div class="num" id="statPostCount">—</div>
+        <div class="lbl">Total Posts + Comments</div>
+      </div>
+      <div class="stat">
+        <div class="num" id="statCreated">—</div>
+        <div class="lbl">Account Created</div>
+      </div>
+      <div class="stat">
+        <div class="num" id="statRep">—</div>
+        <div class="lbl">Reputation</div>
+      </div>
+    </div>
+
+    <p class="note" id="sizeNote">This is a combined on-chain counter (posts and comments together) — the archive below will split them out and pull the real post/comment content references.</p>
+
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-label" id="progressLabel">Fetching...</div>
+    </div>
+
+    <div class="btn-row">
+      <button id="generateBtn">Generate Archive</button>
+    </div>
+  </div>
+
+  <div class="card result" id="resultCard">
+    <div class="stamp">ARCHIVED</div>
+    <p id="resultSummary"></p>
+    <div class="btn-row">
+      <button id="downloadBtn">Download JSON</button>
+      <button class="secondary" id="resetBtn">Start Another</button>
+    </div>
+  </div>
+
+  <footer>Hive Legacy MVP · schema v0.1 · stores pointers, not content</footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var NODES = [
+    "https://api.hive.blog",
+    "https://anyx.io",
+    "https://hive-api.arcange.eu",
+    "https://api.deathwing.me"
+  ];
+
+  var PAGE_LIMIT = 20;
+
+  var usernameInput = document.getElementById('usernameInput');
+  var lookupBtn = document.getElementById('lookupBtn');
+  var lookupError = document.getElementById('lookupError');
+  var previewCard = document.getElementById('previewCard');
+  var previewName = document.getElementById('previewName');
+  var statPostCount = document.getElementById('statPostCount');
+  var statCreated = document.getElementById('statCreated');
+  var statRep = document.getElementById('statRep');
+  var generateBtn = document.getElementById('generateBtn');
+  var progressWrap = document.getElementById('progressWrap');
+  var progressFill = document.getElementById('progressFill');
+  var progressLabel = document.getElementById('progressLabel');
+  var resultCard = document.getElementById('resultCard');
+  var resultSummary = document.getElementById('resultSummary');
+  var downloadBtn = document.getElementById('downloadBtn');
+  var resetBtn = document.getElementById('resetBtn');
+
+  var currentUsername = null;
+  var currentArchive = null;
+
+  function rpcCall(method, params){
+    var body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params });
+    var nodeIndex = 0;
+
+    function tryNode(){
+      if(nodeIndex >= NODES.length){
+        return Promise.reject(new Error("All nodes failed for " + method));
+      }
+      var node = NODES[nodeIndex];
+      nodeIndex++;
+      return fetch(node, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: body
+      }).then(function(res){
+        if(!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      }).then(function(json){
+        if(json.error) throw new Error(json.error.message || "RPC error");
+        return json.result;
+      }).catch(function(err){
+        console.warn("Node failed (" + node + "):", err.message);
+        return tryNode();
+      });
+    }
+    return tryNode();
+  }
+
+  function reputationToScore(rawRep){
+    if(rawRep === undefined || rawRep === null) return null;
+    var rep = typeof rawRep === 'string' ? parseFloat(rawRep) : rawRep;
+    if(isNaN(rep)) return null;
+
+    // Raw Hive reputation values are large integers (9+ digits).
+    // Some nodes/API versions instead return an already-computed
+    // display score (e.g. 70). Treat small values as pre-computed
+    // and skip the log10 conversion, which otherwise collapses
+    // any input under ~1e9 down to the neutral floor of 25.
+    if(Math.abs(rep) < 1000000){
+      return Math.round(rep * 100) / 100;
+    }
+
+    var neg = rep < 0;
+    var repLevel = Math.log10(Math.abs(rep));
+    repLevel = Math.max(repLevel - 9, 0);
+    repLevel = (neg ? -1 : 1) * repLevel;
+    repLevel = (repLevel * 9) + 25;
+    return Math.round(repLevel * 100) / 100;
+  }
+
+  function setError(msg){
+    if(msg){
+      lookupError.textContent = msg;
+      lookupError.style.display = 'block';
+    } else {
+      lookupError.style.display = 'none';
+    }
+  }
+
+  function resetFlow(){
+    previewCard.classList.remove('show');
+    resultCard.classList.remove('show');
+    progressWrap.classList.remove('show');
+    generateBtn.style.display = 'inline-block';
+    generateBtn.disabled = false;
+    setError(null);
+    usernameInput.value = '';
+    usernameInput.focus();
+    currentUsername = null;
+    currentArchive = null;
+  }
+
+  lookupBtn.addEventListener('click', doLookup);
+  usernameInput.addEventListener('keydown', function(e){
+    if(e.key === 'Enter') doLookup();
+  });
+
+  function doLookup(){
+    var uname = usernameInput.value.trim().toLowerCase().replace(/^@/, '');
+    if(!uname){
+      setError('Enter a username first.');
+      return;
+    }
+    setError(null);
+    lookupBtn.disabled = true;
+    lookupBtn.textContent = 'Looking...';
+    previewCard.classList.remove('show');
+    resultCard.classList.remove('show');
+
+    Promise.all([
+      rpcCall("condenser_api.get_accounts", [[uname]]),
+      rpcCall("bridge.get_profile", { account: uname }).catch(function(){ return null; })
+    ]).then(function(results){
+      lookupBtn.disabled = false;
+      lookupBtn.textContent = 'Look Up';
+      var result = results[0];
+      var profile = results[1];
+      if(!result || result.length === 0){
+        setError('No account found with that username.');
+        return;
+      }
+      var acct = result[0];
+      currentUsername = acct.name;
+      previewName.textContent = '@' + acct.name;
+      statPostCount.textContent = (acct.post_count !== undefined) ? acct.post_count.toLocaleString() : '—';
+      statCreated.textContent = acct.created ? acct.created.split('T')[0].split(' ')[0].substring(0,10) : '—';
+
+      // bridge.get_profile returns an already-computed display reputation,
+      // which is reliable across nodes. Fall back to the raw condenser_api
+      // field (converted via the classic formula) only if bridge is unavailable.
+      var repScore = null;
+      if(profile && profile.reputation !== undefined && profile.reputation !== null){
+        repScore = Math.round(profile.reputation * 100) / 100;
+      } else {
+        repScore = reputationToScore(acct.reputation);
+      }
+      statRep.textContent = (repScore !== null) ? repScore : '—';
+      previewCard.classList.add('show');
+    }).catch(function(err){
+      lookupBtn.disabled = false;
+      lookupBtn.textContent = 'Look Up';
+      setError('Lookup failed: ' + err.message);
+    });
+  }
+
+  function parseJsonMetadata(raw){
+    try{
+      return JSON.parse(raw || '{}');
+    }catch(e){
+      return {};
+    }
+  }
+
+  // Fetches all pages for a given sort ("posts" or "comments") via bridge.get_account_posts
+  function fetchAllPosts(account, sort, onProgress){
+    var collected = [];
+    var seen = {};
+    var startAuthor = "";
+    var startPermlink = "";
+
+    function fetchPage(){
+      return rpcCall("bridge.get_account_posts", {
+        sort: sort,
+        account: account,
+        limit: PAGE_LIMIT,
+        start_author: startAuthor || undefined,
+        start_permlink: startPermlink || undefined
+      }).then(function(page){
+        if(!page || page.length === 0) return collected;
+
+        var newOnes = 0;
+        for(var i = 0; i < page.length; i++){
+          var p = page[i];
+          var key = p.author + '/' + p.permlink;
+          if(seen[key]) continue;
+          seen[key] = true;
+          collected.push(p);
+          newOnes++;
+        }
+
+        onProgress(collected.length);
+
+        if(page.length < PAGE_LIMIT || newOnes === 0){
+          return collected;
+        }
+
+        var last = page[page.length - 1];
+        startAuthor = last.author;
+        startPermlink = last.permlink;
+        return fetchPage();
+      });
+    }
+
+    return fetchPage();
+  }
+
+  generateBtn.addEventListener('click', function(){
+    if(!currentUsername) return;
+    generateBtn.disabled = true;
+    progressWrap.classList.add('show');
+    progressFill.style.width = '5%';
+    progressLabel.textContent = 'Fetching posts...';
+
+    var totalCollected = { posts: 0, comments: 0 };
+
+    function updateProgress(){
+      var total = totalCollected.posts + totalCollected.comments;
+      var pct = Math.min(90, 10 + total * 0.5);
+      progressFill.style.width = pct + '%';
+      progressLabel.textContent = 'Fetched ' + totalCollected.posts + ' posts, ' + totalCollected.comments + ' comments so far...';
+    }
+
+    fetchAllPosts(currentUsername, 'posts', function(count){
+      totalCollected.posts = count;
+      updateProgress();
+    }).then(function(rawPosts){
+      progressLabel.textContent = 'Fetching comments...';
+      return fetchAllPosts(currentUsername, 'comments', function(count){
+        totalCollected.comments = count;
+        updateProgress();
+      }).then(function(rawComments){
+        return { posts: rawPosts, comments: rawComments };
+      });
+    }).then(function(data){
+      progressFill.style.width = '95%';
+      progressLabel.textContent = 'Building archive...';
+
+      var entries = [];
+      var seenKeys = {};
+
+      function addEntry(raw, forcedType){
+        var key = raw.author + '/' + raw.permlink;
+        if(seenKeys[key]) return;
+        seenKeys[key] = true;
+
+        var meta = parseJsonMetadata(raw.json_metadata);
+        var isComment = !!(raw.parent_author && raw.parent_author.length > 0);
+        var type = forcedType || (isComment ? 'comment' : 'post');
+
+        var entry = {
+          type: type,
+          author: raw.author,
+          permlink: raw.permlink,
+          created: raw.created,
+          category: raw.category || null
+        };
+
+        if(type === 'post'){
+          entry.title = raw.title || null;
+          entry.tags = Array.isArray(meta.tags) ? meta.tags : (raw.category ? [raw.category] : []);
+        } else {
+          entry.parent_author = raw.parent_author || null;
+          entry.parent_permlink = raw.parent_permlink || null;
+        }
+
+        if(meta.app) entry.app = meta.app;
+
+        entries.push(entry);
+      }
+
+      data.posts.forEach(function(p){ addEntry(p, 'post'); });
+      data.comments.forEach(function(c){ addEntry(c, 'comment'); });
+
+      entries.sort(function(a, b){
+        return new Date(a.created) - new Date(b.created);
+      });
+
+      var postCount = entries.filter(function(e){ return e.type === 'post'; }).length;
+      var commentCount = entries.filter(function(e){ return e.type === 'comment'; }).length;
+
+      currentArchive = {
+        schema: "hive-legacy-archive",
+        version: "0.1",
+        generated_at: new Date().toISOString(),
+        generator: "Hive Legacy MVP",
+        account: {
+          name: currentUsername
+        },
+        summary: {
+          post_count: postCount,
+          comment_count: commentCount,
+          total_entries: entries.length
+        },
+        entries: entries
+      };
+
+      progressFill.style.width = '100%';
+      progressLabel.textContent = 'Done.';
+
+      setTimeout(function(){
+        previewCard.classList.remove('show');
+        resultCard.classList.add('show');
+        resultSummary.textContent = postCount.toLocaleString() + ' posts and ' + commentCount.toLocaleString() +
+          ' comments indexed for @' + currentUsername + '. Ready to download.';
+        generateBtn.disabled = false;
+      }, 400);
+
+    }).catch(function(err){
+      progressLabel.textContent = 'Error: ' + err.message;
+      generateBtn.disabled = false;
+      console.error(err);
+    });
+  });
+
+  downloadBtn.addEventListener('click', function(){
+    if(!currentArchive) return;
+    var blob = new Blob([JSON.stringify(currentArchive, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    var dateStr = new Date().toISOString().split('T')[0];
+    a.href = url;
+    a.download = 'hive-legacy-' + currentArchive.account.name + '-' + dateStr + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  resetBtn.addEventListener('click', resetFlow);
+
+})();
+</script>
+</body>
+</html>
