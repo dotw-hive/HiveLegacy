@@ -477,8 +477,10 @@
   }
 
   function parseJsonMetadata(raw){
+    if(!raw) return {};
+    if(typeof raw === 'object') return raw;
     try{
-      return JSON.parse(raw || '{}');
+      return JSON.parse(raw);
     }catch(e){
       return {};
     }
@@ -566,7 +568,7 @@
         if(seenKeys[key]) return;
         seenKeys[key] = true;
 
-        var meta = parseJsonMetadata(raw.json_metadata);
+        var meta = parseJsonMetadata(raw.posting_json_metadata || raw.json_metadata);
         var isComment = !!(raw.parent_author && raw.parent_author.length > 0);
         var type = forcedType || (isComment ? 'comment' : 'post');
 
