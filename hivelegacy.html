@@ -354,6 +354,7 @@
   var resetBtn = document.getElementById('resetBtn');
 
   var currentUsername = null;
+  var currentAccountCreated = null;
   var currentArchive = null;
 
   function rpcCall(method, params){
@@ -426,6 +427,7 @@
     usernameInput.value = '';
     usernameInput.focus();
     currentUsername = null;
+    currentAccountCreated = null;
     currentArchive = null;
   }
 
@@ -462,6 +464,7 @@
       }
       var acct = result[0];
       currentUsername = acct.name;
+      currentAccountCreated = acct.created || null;
       previewName.textContent = '@' + acct.name;
       statPostCount.textContent = (acct.post_count !== undefined) ? acct.post_count.toLocaleString() : '—';
       statCreated.textContent = acct.created ? acct.created.split('T')[0].split(' ')[0].substring(0,10) : '—';
@@ -608,11 +611,27 @@
 
       currentArchive = {
         schema: "hive-legacy-archive",
-        version: "0.1",
+        version: "0.2",
         generated_at: new Date().toISOString(),
         generator: "Hive Legacy MVP",
+        enrichment: null,
         account: {
-          name: currentUsername
+          name: currentUsername,
+          created: currentAccountCreated
+        },
+        manifest: {
+          account_metadata: "full",
+          posts: "full",
+          comments: "full",
+          titles: "partial",
+          last_update: "none",
+          children: "none",
+          bodies: "none",
+          transactions: "none",
+          blocks: "none",
+          rewards: "none",
+          votes: "none",
+          reblogs: "none"
         },
         summary: {
           post_count: postCount,
