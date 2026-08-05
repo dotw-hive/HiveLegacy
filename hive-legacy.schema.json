@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dotw-hive/HiveLegacy/blob/main/hive-legacy.schema.json",
+  "title": "Hive Legacy Archive",
+  "description": "A portable index of a Hive account's authored posts and comments. See SCHEMA.md in the same repository for the intent behind each field.",
+  "type": "object",
+  "required": [
+    "schema",
+    "version",
+    "generated_at",
+    "generator",
+    "account",
+    "manifest",
+    "summary",
+    "entries"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "hive-legacy-archive",
+      "description": "Fixed identifier marking this file as a Hive Legacy archive."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Version of the Hive Legacy archive format used to produce this file."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp this archive was generated. Permanent; never changes on enrichment."
+    },
+    "generator": {
+      "type": "string",
+      "description": "Name of the tool that generated this archive."
+    },
+    "enrichment": {
+      "description": "Null if this archive has not been enriched, otherwise an object describing the enrichment pass.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["generator", "version", "enriched_at"],
+          "additionalProperties": false,
+          "properties": {
+            "generator": {
+              "type": "string",
+              "description": "Name of the tool that performed the enrichment pass."
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^[0-9]+\\.[0-9]+$",
+              "description": "Version of the enrichment tool/format used."
+            },
+            "enriched_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Timestamp the enrichment pass was performed."
+            }
+          }
+        }
+      ]
+    },
+    "account": {
+      "type": "object",
+      "required": ["name", "created"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Hive account username."
+        },
+        "created": {
+          "type": "string",
+          "format": "date-time",
+          "description": "On-chain account creation timestamp."
+        }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "description": "Literal, per-field coverage declaration for this specific archive file. See SCHEMA.md for full rationale.",
+      "required": [
+        "account_metadata",
+        "posts",
+        "comments",
+        "titles",
+        "last_update",
+        "children",
+        "bodies",
+        "transactions",
+        "blocks",
+        "rewards",
+        "votes",
+        "reblogs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "account_metadata": { "$ref": "#/$defs/coverageValue" },
+        "posts": { "$ref": "#/$defs/coverageValue" },
+        "comments": { "$ref": "#/$defs/coverageValue" },
+        "titles": { "$ref": "#/$defs/coverageValue" },
+        "last_update": { "$ref": "#/$defs/coverageValue" },
+        "children": { "$ref": "#/$defs/coverageValue" },
+        "bodies": { "$ref": "#/$defs/coverageValue" },
+        "transactions": { "$ref": "#/$defs/coverageValue" },
+        "blocks": { "$ref": "#/$defs/coverageValue" },
+        "rewards": { "$ref": "#/$defs/coverageValue" },
+        "votes": { "$ref": "#/$defs/coverageValue" },
+        "reblogs": { "$ref": "#/$defs/coverageValue" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["post_count", "comment_count", "total_entries"],
+      "additionalProperties": false,
+      "properties": {
+        "post_count": { "type": "integer", "minimum": 0 },
+        "comment_count": { "type": "integer", "minimum": 0 },
+        "total_entries": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "coverageValue": {
+      "type": "string",
+      "enum": ["full", "partial", "none"],
+      "description": "Whether this field is fully present, partially present, or absent in this archive."
+    },
+    "entry": {
+      "type": "object",
+      "required": ["type", "author", "permlink", "created", "category"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["post", "comment"]
+        },
+        "author": {
+          "type": "string"
+        },
+        "permlink": {
+          "type": "string"
+        },
+        "created": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "category": {
+          "type": ["string", "null"]
+        },
+        "title": {
+          "type": "string",
+          "description": "Post title, possibly truncated by the source API. See manifest.titles."
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "app": {
+          "type": "string",
+          "description": "Frontend/application used to publish this entry, if available."
+        },
+        "parent_author": {
+          "type": ["string", "null"],
+          "description": "Present on comments; the author of the parent post/comment."
+        },
+        "parent_permlink": {
+          "type": ["string", "null"],
+          "description": "Present on comments; the permlink of the parent post/comment."
+        },
+        "trx_id": {
+          "type": "string",
+          "description": "Transaction ID. Present only after an Enrich pass."
+        },
+        "block": {
+          "type": "integer",
+          "description": "Block number. Present only after an Enrich pass."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "type": { "const": "post" } }
+          },
+          "then": {
+            "properties": {
+              "parent_author": { "type": "null" },
+              "parent_permlink": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "comment" } }
+          },
+          "then": {
+            "required": ["parent_author", "parent_permlink"]
+          }
+        }
+      ]
+    }
+  }
+}
