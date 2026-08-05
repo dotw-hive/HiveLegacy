@@ -203,12 +203,17 @@
     height: 10px;
     background: rgba(34,32,27,0.1);
     border: 1px solid var(--ink);
+    overflow: hidden;
   }
   .progress-fill{
     height: 100%;
-    width: 0%;
+    width: 40%;
     background: repeating-linear-gradient(45deg, var(--brass) 0 6px, var(--stamp) 6px 12px);
-    transition: width 0.2s ease;
+    animation: progress-indeterminate 1.4s ease-in-out infinite;
+  }
+  @keyframes progress-indeterminate{
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(250%); }
   }
   .progress-label{
     font-family:'Courier Prime', monospace;
@@ -414,6 +419,7 @@
     previewCard.classList.remove('show');
     resultCard.classList.remove('show');
     progressWrap.classList.remove('show');
+    progressLabel.textContent = '';
     generateBtn.style.display = 'inline-block';
     generateBtn.disabled = false;
     setError(null);
@@ -439,6 +445,8 @@
     lookupBtn.textContent = 'Looking...';
     previewCard.classList.remove('show');
     resultCard.classList.remove('show');
+    progressWrap.classList.remove('show');
+    progressLabel.textContent = '';
 
     Promise.all([
       rpcCall("condenser_api.get_accounts", [[uname]]),
@@ -533,15 +541,11 @@
     if(!currentUsername) return;
     generateBtn.disabled = true;
     progressWrap.classList.add('show');
-    progressFill.style.width = '5%';
     progressLabel.textContent = 'Fetching posts...';
 
     var totalCollected = { posts: 0, comments: 0 };
 
     function updateProgress(){
-      var total = totalCollected.posts + totalCollected.comments;
-      var pct = Math.min(90, 10 + total * 0.5);
-      progressFill.style.width = pct + '%';
       progressLabel.textContent = 'Fetched ' + totalCollected.posts + ' posts, ' + totalCollected.comments + ' comments so far...';
     }
 
@@ -557,7 +561,6 @@
         return { posts: rawPosts, comments: rawComments };
       });
     }).then(function(data){
-      progressFill.style.width = '95%';
       progressLabel.textContent = 'Building archive...';
 
       var entries = [];
@@ -619,10 +622,10 @@
         entries: entries
       };
 
-      progressFill.style.width = '100%';
       progressLabel.textContent = 'Done.';
 
       setTimeout(function(){
+        progressWrap.classList.remove('show');
         previewCard.classList.remove('show');
         resultCard.classList.add('show');
         resultSummary.textContent = postCount.toLocaleString() + ' posts and ' + commentCount.toLocaleString() +
