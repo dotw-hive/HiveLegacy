@@ -194,6 +194,69 @@
     margin: 0 0 18px;
   }
 
+  .pace-row{
+    margin: 0 0 16px;
+  }
+  .pace-toggle{
+    display: inline-flex;
+    border: 1px solid var(--ink);
+  }
+  .pace-btn{
+    font-family:'Courier Prime', monospace;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 8px 16px;
+    background: transparent;
+    color: var(--ink);
+    border: none;
+    border-right: 1px solid var(--ink);
+    cursor: pointer;
+  }
+  .pace-btn:last-child{ border-right: none; }
+  .pace-btn.active{
+    background: var(--ink);
+    color: var(--card);
+  }
+  .pace-btn:hover:not(.active){ background: rgba(34,32,27,0.08); }
+  .pace-note{
+    font-size: 12px;
+    color: var(--ink-soft);
+    font-style: italic;
+    margin: 8px 0 0;
+  }
+
+  .large-account-notice{
+    display:none;
+    border: 1px solid var(--brass);
+    background: rgba(140,106,63,0.08);
+    padding: 12px 14px;
+    margin: 0 0 16px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .large-account-notice.show{ display:block; }
+  .large-account-notice .switch-link{
+    font-family:'Courier Prime', monospace;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--stamp-dark);
+    text-decoration: underline;
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    margin-left: 4px;
+  }
+
+  .progress-timer{
+    font-family:'Courier Prime', monospace;
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top: 4px;
+  }
+
   .progress-wrap{
     display:none;
     margin: 14px 0;
@@ -301,9 +364,24 @@
 
     <p class="note" id="sizeNote">This is a combined on-chain counter (posts and comments together) — the archive below will split them out and pull the real post/comment content references.</p>
 
+    <div class="large-account-notice" id="largeAccountNotice">
+      This account is large enough that pulling its full history puts real load on the public API node behind this tool. Consider switching to Considerate mode.
+      <button type="button" class="switch-link" id="switchToConsiderateBtn">Switch to Considerate</button>
+    </div>
+
+    <div class="pace-row">
+      <span class="field-label">Request Pace</span>
+      <div class="pace-toggle">
+        <button type="button" class="pace-btn active" id="paceFastBtn" data-pace="fast">Fast</button>
+        <button type="button" class="pace-btn" id="paceConsiderateBtn" data-pace="considerate">Considerate</button>
+      </div>
+      <p class="pace-note" id="paceNote">No delay between requests.</p>
+    </div>
+
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
       <div class="progress-label" id="progressLabel">Fetching...</div>
+      <div class="progress-timer" id="progressTimer"></div>
     </div>
 
     <div class="btn-row">
@@ -320,7 +398,7 @@
     </div>
   </div>
 
-  <footer>Hive Legacy MVP · schema v0.1 · stores pointers, not content</footer>
+  <footer>Hive Legacy MVP · schema v0.2 · stores pointers, not content</footer>
 </div>
 
 <script>
@@ -335,6 +413,8 @@
   ];
 
   var PAGE_LIMIT = 20;
+  var LARGE_ACCOUNT_THRESHOLD = 5000;
+  var CONSIDERATE_DELAY_MS = 150;
 
   var usernameInput = document.getElementById('usernameInput');
   var lookupBtn = document.getElementById('lookupBtn');
@@ -344,10 +424,16 @@
   var statPostCount = document.getElementById('statPostCount');
   var statCreated = document.getElementById('statCreated');
   var statRep = document.getElementById('statRep');
+  var largeAccountNotice = document.getElementById('largeAccountNotice');
+  var switchToConsiderateBtn = document.getElementById('switchToConsiderateBtn');
+  var paceFastBtn = document.getElementById('paceFastBtn');
+  var paceConsiderateBtn = document.getElementById('paceConsiderateBtn');
+  var paceNote = document.getElementById('paceNote');
   var generateBtn = document.getElementById('generateBtn');
   var progressWrap = document.getElementById('progressWrap');
   var progressFill = document.getElementById('progressFill');
   var progressLabel = document.getElementById('progressLabel');
+  var progressTimer = document.getElementById('progressTimer');
   var resultCard = document.getElementById('resultCard');
   var resultSummary = document.getElementById('resultSummary');
   var downloadBtn = document.getElementById('downloadBtn');
@@ -356,6 +442,34 @@
   var currentUsername = null;
   var currentAccountCreated = null;
   var currentArchive = null;
+  var currentPace = 'fast';
+  var timerInterval = null;
+  var generationStartTime = null;
+  var lastElapsedLabel = '';
+
+  function setPace(pace){
+    currentPace = pace;
+    paceFastBtn.classList.toggle('active', pace === 'fast');
+    paceConsiderateBtn.classList.toggle('active', pace === 'considerate');
+    paceNote.textContent = (pace === 'considerate')
+      ? 'Adds a short delay between requests to go easier on public Hive nodes.'
+      : 'No delay between requests.';
+  }
+
+  paceFastBtn.addEventListener('click', function(){ setPace('fast'); });
+  paceConsiderateBtn.addEventListener('click', function(){ setPace('considerate'); });
+  switchToConsiderateBtn.addEventListener('click', function(){ setPace('considerate'); });
+
+  function formatElapsed(ms){
+    var totalSec = Math.floor(ms / 1000);
+    var m = Math.floor(totalSec / 60);
+    var s = totalSec % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  function sleep(ms){
+    return new Promise(function(resolve){ setTimeout(resolve, ms); });
+  }
 
   function rpcCall(method, params){
     var body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params });
@@ -417,10 +531,15 @@
   }
 
   function resetFlow(){
+    clearInterval(timerInterval);
+    lookupBtn.disabled = false;
     previewCard.classList.remove('show');
     resultCard.classList.remove('show');
     progressWrap.classList.remove('show');
     progressLabel.textContent = '';
+    progressTimer.textContent = '';
+    largeAccountNotice.classList.remove('show');
+    setPace('fast');
     generateBtn.style.display = 'inline-block';
     generateBtn.disabled = false;
     setError(null);
@@ -449,6 +568,9 @@
     resultCard.classList.remove('show');
     progressWrap.classList.remove('show');
     progressLabel.textContent = '';
+    progressTimer.textContent = '';
+    largeAccountNotice.classList.remove('show');
+    setPace('fast');
 
     Promise.all([
       rpcCall("condenser_api.get_accounts", [[uname]]),
@@ -468,6 +590,10 @@
       previewName.textContent = '@' + acct.name;
       statPostCount.textContent = (acct.post_count !== undefined) ? acct.post_count.toLocaleString() : '—';
       statCreated.textContent = acct.created ? acct.created.split('T')[0].split(' ')[0].substring(0,10) : '—';
+
+      if(acct.post_count !== undefined && acct.post_count >= LARGE_ACCOUNT_THRESHOLD){
+        largeAccountNotice.classList.add('show');
+      }
 
       // bridge.get_profile returns an already-computed display reputation,
       // which is reliable across nodes. Fall back to the raw condenser_api
@@ -498,7 +624,7 @@
   }
 
   // Fetches all pages for a given sort ("posts" or "comments") via bridge.get_account_posts
-  function fetchAllPosts(account, sort, onProgress){
+  function fetchAllPosts(account, sort, pace, onProgress){
     var collected = [];
     var seen = {};
     var startAuthor = "";
@@ -533,6 +659,10 @@
         var last = page[page.length - 1];
         startAuthor = last.author;
         startPermlink = last.permlink;
+
+        if(pace === 'considerate'){
+          return sleep(CONSIDERATE_DELAY_MS).then(fetchPage);
+        }
         return fetchPage();
       });
     }
@@ -543,21 +673,29 @@
   generateBtn.addEventListener('click', function(){
     if(!currentUsername) return;
     generateBtn.disabled = true;
+    lookupBtn.disabled = true;
     progressWrap.classList.add('show');
     progressLabel.textContent = 'Fetching posts...';
 
+    generationStartTime = Date.now();
+    progressTimer.textContent = 'Elapsed: 0:00';
+    timerInterval = setInterval(function(){
+      progressTimer.textContent = 'Elapsed: ' + formatElapsed(Date.now() - generationStartTime);
+    }, 1000);
+
+    var pace = currentPace;
     var totalCollected = { posts: 0, comments: 0 };
 
     function updateProgress(){
       progressLabel.textContent = 'Fetched ' + totalCollected.posts + ' posts, ' + totalCollected.comments + ' comments so far...';
     }
 
-    fetchAllPosts(currentUsername, 'posts', function(count){
+    fetchAllPosts(currentUsername, 'posts', pace, function(count){
       totalCollected.posts = count;
       updateProgress();
     }).then(function(rawPosts){
       progressLabel.textContent = 'Fetching comments...';
-      return fetchAllPosts(currentUsername, 'comments', function(count){
+      return fetchAllPosts(currentUsername, 'comments', pace, function(count){
         totalCollected.comments = count;
         updateProgress();
       }).then(function(rawComments){
@@ -641,6 +779,8 @@
         entries: entries
       };
 
+      clearInterval(timerInterval);
+      lastElapsedLabel = formatElapsed(Date.now() - generationStartTime);
       progressLabel.textContent = 'Done.';
 
       setTimeout(function(){
@@ -648,13 +788,16 @@
         previewCard.classList.remove('show');
         resultCard.classList.add('show');
         resultSummary.textContent = postCount.toLocaleString() + ' posts and ' + commentCount.toLocaleString() +
-          ' comments indexed for @' + currentUsername + '. Ready to download.';
+          ' comments indexed for @' + currentUsername + ' in ' + lastElapsedLabel + '. Ready to download.';
         generateBtn.disabled = false;
+        lookupBtn.disabled = false;
       }, 400);
 
     }).catch(function(err){
+      clearInterval(timerInterval);
       progressLabel.textContent = 'Error: ' + err.message;
       generateBtn.disabled = false;
+      lookupBtn.disabled = false;
       console.error(err);
     });
   });
