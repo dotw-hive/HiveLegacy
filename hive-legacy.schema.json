@@ -153,8 +153,8 @@
           "type": ["string", "null"]
         },
         "title": {
-          "type": "string",
-          "description": "Post title, possibly truncated by the source API. See manifest.titles."
+          "type": ["string", "null"],
+          "description": "Post title, possibly truncated by the source API (see manifest.titles). Null for posts with no title, such as microblog-style content (e.g. dBuzz) that has no title field at all."
         },
         "tags": {
           "type": "array",
