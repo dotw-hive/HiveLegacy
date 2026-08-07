@@ -325,6 +325,62 @@
     .card{ padding: 20px; }
     .lookup-row{ flex-direction: column; }
   }
+
+  .mode-tabs{
+    display: flex;
+    border: 1px solid var(--ink);
+    margin-bottom: 22px;
+  }
+  .mode-tab{
+    flex: 1;
+    font-family: 'Courier Prime', monospace;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 12px;
+    text-align: center;
+    background: transparent;
+    color: var(--ink);
+    border: none;
+    cursor: pointer;
+  }
+  .mode-tab:first-child{ border-right: 1px solid var(--ink); }
+  .mode-tab.active{
+    background: var(--ink);
+    color: var(--card);
+  }
+  .mode-tab:hover:not(.active){ background: rgba(34,32,27,0.08); }
+
+  .mode-panel{ display:none; }
+  .mode-panel.active{ display:block; }
+
+  .file-drop{
+    border: 2px dashed var(--brass);
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    font-family:'Courier Prime', monospace;
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin-bottom: 6px;
+  }
+  .file-drop:hover{ background: rgba(140,106,63,0.06); }
+  .file-drop.has-file{
+    border-style: solid;
+    border-color: var(--verified);
+    color: var(--ink);
+  }
+
+  .manifest-mini{
+    font-family:'Courier Prime', monospace;
+    font-size: 11px;
+    color: var(--ink-soft);
+    line-height: 1.6;
+    margin: 10px 0 18px;
+  }
+  .manifest-mini .mf-full{ color: var(--verified); }
+  .manifest-mini .mf-partial{ color: var(--brass); }
+  .manifest-mini .mf-none{ color: var(--ink-soft); }
 </style>
 </head>
 <body>
@@ -337,6 +393,12 @@
     <hr class="rule">
   </header>
 
+  <div class="mode-tabs">
+    <button type="button" class="mode-tab active" id="tabGenerateBtn" data-mode="generate">Generate</button>
+    <button type="button" class="mode-tab" id="tabEnrichBtn" data-mode="enrich">Enrich</button>
+  </div>
+
+  <div class="mode-panel active" id="generatePanel">
   <div class="card">
     <span class="field-label">Hive Account</span>
     <div class="lookup-row">
@@ -402,6 +464,78 @@
     <div class="btn-row">
       <button id="downloadBtn">Download JSON</button>
       <button class="secondary" id="resetBtn">Start Another</button>
+    </div>
+  </div>
+  </div>
+
+  <div class="mode-panel" id="enrichPanel">
+    <div class="card">
+      <span class="field-label">Existing Hive Legacy Archive</span>
+      <div class="file-drop" id="fileDropZone">
+        Click to choose a Hive Legacy .json archive, or drop it here
+      </div>
+      <input type="file" id="archiveFileInput" accept=".json,application/json" style="display:none;">
+      <div id="enrichFileError" class="error-line" style="display:none;"></div>
+    </div>
+
+    <div class="card preview" id="enrichPreviewCard">
+      <div class="preview-head">
+        <h2 id="enrichPreviewName">@username</h2>
+        <span class="stamp-chip">Loaded</span>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="num" id="enrichEntryCount">—</div>
+          <div class="lbl">Total Entries</div>
+        </div>
+        <div class="stat">
+          <div class="num" id="enrichGeneratedAt">—</div>
+          <div class="lbl">Generated</div>
+        </div>
+        <div class="stat">
+          <div class="num" id="enrichAlreadyEnriched">—</div>
+          <div class="lbl">Already Enriched</div>
+        </div>
+      </div>
+
+      <div class="manifest-mini" id="enrichManifestPreview"></div>
+
+      <p class="note">Enrich adds transaction IDs, block numbers, and full original titles by walking this account's full on-chain history. It never rewrites what Generate already captured — see SCHEMA.md.</p>
+
+      <div class="large-account-notice" id="enrichLargeAccountNotice">
+        This account is large enough that walking its full on-chain history puts real load on the public API node behind this tool. Consider switching to Considerate mode.
+        <button type="button" class="switch-link" id="enrichSwitchToConsiderateBtn">Switch to Considerate</button>
+      </div>
+
+      <div class="pace-row">
+        <span class="field-label">Request Pace</span>
+        <div class="pace-toggle">
+          <button type="button" class="pace-btn" id="enrichPaceFastBtn" data-pace="fast">Fast</button>
+          <button type="button" class="pace-btn active" id="enrichPaceConsiderateBtn" data-pace="considerate">Considerate</button>
+        </div>
+        <p class="pace-note" id="enrichPaceNote">Adds a short delay between requests to go easier on public Hive nodes.</p>
+      </div>
+
+      <div class="progress-wrap" id="enrichProgressWrap">
+        <div class="progress-track"><div class="progress-fill" id="enrichProgressFill"></div></div>
+        <div class="progress-label" id="enrichProgressLabel">Fetching...</div>
+        <div class="progress-timer" id="enrichProgressTimer"></div>
+      </div>
+
+      <div class="btn-row">
+        <button id="enrichBtn">Enrich Archive</button>
+        <button id="cancelEnrichBtn" class="secondary" style="display:none;">Cancel</button>
+      </div>
+    </div>
+
+    <div class="card result" id="enrichResultCard">
+      <div class="stamp">ENRICHED</div>
+      <p id="enrichResultSummary"></p>
+      <div class="btn-row">
+        <button id="enrichDownloadBtn">Download Enriched JSON</button>
+        <button class="secondary" id="enrichResetBtn">Enrich Another</button>
+      </div>
     </div>
   </div>
 
@@ -893,6 +1027,374 @@
   });
 
   resetBtn.addEventListener('click', resetFlow);
+
+  // =========================================================
+  // Enrich
+  // =========================================================
+
+  var HISTORY_LIMIT = 1000;
+  var ENRICH_VERSION = "0.2";
+
+  var tabGenerateBtn = document.getElementById('tabGenerateBtn');
+  var tabEnrichBtn = document.getElementById('tabEnrichBtn');
+  var generatePanel = document.getElementById('generatePanel');
+  var enrichPanel = document.getElementById('enrichPanel');
+
+  var fileDropZone = document.getElementById('fileDropZone');
+  var archiveFileInput = document.getElementById('archiveFileInput');
+  var enrichFileError = document.getElementById('enrichFileError');
+  var enrichPreviewCard = document.getElementById('enrichPreviewCard');
+  var enrichPreviewName = document.getElementById('enrichPreviewName');
+  var enrichEntryCount = document.getElementById('enrichEntryCount');
+  var enrichGeneratedAt = document.getElementById('enrichGeneratedAt');
+  var enrichAlreadyEnriched = document.getElementById('enrichAlreadyEnriched');
+  var enrichManifestPreview = document.getElementById('enrichManifestPreview');
+  var enrichLargeAccountNotice = document.getElementById('enrichLargeAccountNotice');
+  var enrichSwitchToConsiderateBtn = document.getElementById('enrichSwitchToConsiderateBtn');
+  var enrichPaceFastBtn = document.getElementById('enrichPaceFastBtn');
+  var enrichPaceConsiderateBtn = document.getElementById('enrichPaceConsiderateBtn');
+  var enrichPaceNote = document.getElementById('enrichPaceNote');
+  var enrichProgressWrap = document.getElementById('enrichProgressWrap');
+  var enrichProgressFill = document.getElementById('enrichProgressFill');
+  var enrichProgressLabel = document.getElementById('enrichProgressLabel');
+  var enrichProgressTimer = document.getElementById('enrichProgressTimer');
+  var enrichBtn = document.getElementById('enrichBtn');
+  var cancelEnrichBtn = document.getElementById('cancelEnrichBtn');
+  var enrichResultCard = document.getElementById('enrichResultCard');
+  var enrichResultSummary = document.getElementById('enrichResultSummary');
+  var enrichDownloadBtn = document.getElementById('enrichDownloadBtn');
+  var enrichResetBtn = document.getElementById('enrichResetBtn');
+
+  var loadedArchive = null;
+  var enrichedArchive = null;
+  var currentEnrichPace = 'considerate';
+  var enrichAbortController = null;
+  var enrichTimerInterval = null;
+  var enrichGenerationStartTime = null;
+  var enrichLastElapsedLabel = '';
+
+  function switchMode(mode){
+    tabGenerateBtn.classList.toggle('active', mode === 'generate');
+    tabEnrichBtn.classList.toggle('active', mode === 'enrich');
+    generatePanel.classList.toggle('active', mode === 'generate');
+    enrichPanel.classList.toggle('active', mode === 'enrich');
+  }
+  tabGenerateBtn.addEventListener('click', function(){ switchMode('generate'); });
+  tabEnrichBtn.addEventListener('click', function(){ switchMode('enrich'); });
+
+  function setEnrichPace(pace){
+    currentEnrichPace = pace;
+    enrichPaceFastBtn.classList.toggle('active', pace === 'fast');
+    enrichPaceConsiderateBtn.classList.toggle('active', pace === 'considerate');
+    enrichPaceNote.textContent = (pace === 'considerate')
+      ? 'Adds a short delay between requests to go easier on public Hive nodes.'
+      : 'No delay between requests.';
+  }
+  enrichPaceFastBtn.addEventListener('click', function(){ setEnrichPace('fast'); });
+  enrichPaceConsiderateBtn.addEventListener('click', function(){ setEnrichPace('considerate'); });
+  enrichSwitchToConsiderateBtn.addEventListener('click', function(){ setEnrichPace('considerate'); });
+
+  function setEnrichFileError(msg){
+    if(msg){
+      enrichFileError.textContent = msg;
+      enrichFileError.style.display = 'block';
+    } else {
+      enrichFileError.style.display = 'none';
+    }
+  }
+
+  function resetEnrichFlow(){
+    clearInterval(enrichTimerInterval);
+    if(enrichAbortController){ enrichAbortController.abort(); }
+    enrichAbortController = null;
+    loadedArchive = null;
+    enrichedArchive = null;
+    archiveFileInput.value = '';
+    fileDropZone.classList.remove('has-file');
+    fileDropZone.textContent = 'Click to choose a Hive Legacy .json archive, or drop it here';
+    enrichPreviewCard.classList.remove('show');
+    enrichResultCard.classList.remove('show');
+    enrichProgressWrap.classList.remove('show');
+    enrichProgressFill.classList.remove('stopped');
+    enrichProgressLabel.textContent = '';
+    enrichProgressTimer.textContent = '';
+    enrichLargeAccountNotice.classList.remove('show');
+    setEnrichPace('considerate');
+    setEnrichFileError(null);
+    enrichBtn.disabled = false;
+    cancelEnrichBtn.style.display = 'none';
+  }
+
+  fileDropZone.addEventListener('click', function(){ archiveFileInput.click(); });
+  fileDropZone.addEventListener('dragover', function(e){ e.preventDefault(); });
+  fileDropZone.addEventListener('drop', function(e){
+    e.preventDefault();
+    if(e.dataTransfer.files && e.dataTransfer.files[0]){
+      handleArchiveFile(e.dataTransfer.files[0]);
+    }
+  });
+  archiveFileInput.addEventListener('change', function(){
+    if(archiveFileInput.files && archiveFileInput.files[0]){
+      handleArchiveFile(archiveFileInput.files[0]);
+    }
+  });
+
+  function manifestBadge(value){
+    var cls = value === 'full' ? 'mf-full' : (value === 'partial' ? 'mf-partial' : 'mf-none');
+    return '<span class="' + cls + '">' + value + '</span>';
+  }
+
+  function handleArchiveFile(file){
+    setEnrichFileError(null);
+    enrichPreviewCard.classList.remove('show');
+    enrichResultCard.classList.remove('show');
+
+    var reader = new FileReader();
+    reader.onload = function(){
+      var parsed;
+      try{
+        parsed = JSON.parse(reader.result);
+      }catch(e){
+        setEnrichFileError('That file isn\'t valid JSON.');
+        return;
+      }
+      if(!parsed || parsed.schema !== 'hive-legacy-archive' || !parsed.account || !Array.isArray(parsed.entries)){
+        setEnrichFileError('That doesn\'t look like a Hive Legacy archive.');
+        return;
+      }
+
+      loadedArchive = parsed;
+      fileDropZone.classList.add('has-file');
+      fileDropZone.textContent = 'Loaded: ' + file.name;
+
+      enrichPreviewName.textContent = '@' + parsed.account.name;
+      enrichEntryCount.textContent = (parsed.entries.length || 0).toLocaleString();
+      enrichGeneratedAt.textContent = parsed.generated_at ? parsed.generated_at.split('T')[0] : '—';
+      enrichAlreadyEnriched.textContent = parsed.enrichment ? 'Yes' : 'No';
+
+      var m = parsed.manifest || {};
+      var mfFields = ['transactions', 'blocks', 'titles'];
+      var mfHtml = mfFields.map(function(f){
+        return f + ': ' + manifestBadge(m[f] || 'none');
+      }).join(' &nbsp;·&nbsp; ');
+      enrichManifestPreview.innerHTML = mfHtml;
+
+      enrichLargeAccountNotice.classList.remove('show');
+      rpcCall("condenser_api.get_accounts", [[parsed.account.name]]).then(function(result){
+        if(result && result[0] && result[0].post_count >= LARGE_ACCOUNT_THRESHOLD){
+          enrichLargeAccountNotice.classList.add('show');
+        }
+      }).catch(function(){ /* non-fatal; skip notice if lookup fails */ });
+
+      enrichPreviewCard.classList.add('show');
+    };
+    reader.onerror = function(){
+      setEnrichFileError('Could not read that file.');
+    };
+    reader.readAsText(file);
+  }
+
+  // Walks condenser_api.get_account_history, filtered client-side to this
+  // account's own "comment" ops (covers both posts and comments, and every
+  // edit — Hive re-broadcasts a comment op on each edit).
+  function fetchCommentHistory(account, pace, signal, onProgress){
+    var collected = [];
+    var nextStart = -1;
+    var totalScanned = 0;
+    var batchCount = 0;
+    var MAX_BATCHES = 2000; // generous circuit breaker; ~2M ops at HISTORY_LIMIT=1000
+
+    function fetchBatch(){
+      batchCount++;
+      if(batchCount > MAX_BATCHES){
+        return Promise.reject(new Error('Exceeded maximum history depth — this may indicate a pagination issue rather than a genuinely huge account.'));
+      }
+
+      // Hive's get_account_history requires limit <= start+1 (except when
+      // start is -1, meaning "most recent"). Near the beginning of an
+      // account's history, start shrinks below HISTORY_LIMIT, so limit
+      // must shrink to match or every node rejects the request outright.
+      var limit = (nextStart === -1) ? HISTORY_LIMIT : Math.min(HISTORY_LIMIT, nextStart + 1);
+
+      return rpcCall("condenser_api.get_account_history", [account, nextStart, limit], signal).then(function(batch){
+        if(!batch || batch.length === 0){ return collected; }
+
+        var lowestIndex = null;
+        for(var i = 0; i < batch.length; i++){
+          var idx = batch[i][0];
+          var opWrapper = batch[i][1];
+          if(lowestIndex === null || idx < lowestIndex) lowestIndex = idx;
+          var opArr = opWrapper.op;
+          if(opArr && opArr[0] === 'comment' && opArr[1] && opArr[1].author === account){
+            collected.push({
+              index: idx,
+              permlink: opArr[1].permlink,
+              title: opArr[1].title,
+              trx_id: opWrapper.trx_id,
+              block: opWrapper.block
+            });
+          }
+        }
+        totalScanned += batch.length;
+        onProgress(totalScanned, collected.length);
+
+        if(lowestIndex <= 0){
+          return collected;
+        }
+        nextStart = lowestIndex - 1;
+
+        if(pace === 'considerate'){
+          return sleep(CONSIDERATE_DELAY_MS).then(fetchBatch);
+        }
+        return fetchBatch();
+      });
+    }
+
+    return fetchBatch();
+  }
+
+  // Groups raw comment ops by permlink. First (lowest index) = original
+  // publish. Last (highest index) = most recent edit.
+  function buildEnrichmentMap(commentOps){
+    var byPermlink = {};
+    commentOps.forEach(function(op){
+      if(!byPermlink[op.permlink]){ byPermlink[op.permlink] = []; }
+      byPermlink[op.permlink].push(op);
+    });
+    var map = {};
+    Object.keys(byPermlink).forEach(function(permlink){
+      var ops = byPermlink[permlink].sort(function(a, b){ return a.index - b.index; });
+      var original = ops[0];
+      var latest = ops[ops.length - 1];
+      map[permlink] = {
+        trx_id: original.trx_id,
+        block: original.block,
+        original_title: original.title || null,
+        latest_title: (latest.title && latest.title !== original.title) ? latest.title : null
+      };
+    });
+    return map;
+  }
+
+  enrichBtn.addEventListener('click', function(){
+    if(!loadedArchive) return;
+    enrichBtn.disabled = true;
+    cancelEnrichBtn.style.display = 'inline-block';
+    enrichProgressWrap.classList.add('show');
+    enrichProgressFill.classList.remove('stopped');
+    enrichProgressLabel.textContent = 'Walking account history...';
+
+    enrichAbortController = new AbortController();
+    var signal = enrichAbortController.signal;
+    var pace = currentEnrichPace;
+
+    enrichGenerationStartTime = Date.now();
+    enrichProgressTimer.textContent = 'Elapsed: 0:00';
+    enrichTimerInterval = setInterval(function(){
+      enrichProgressTimer.textContent = 'Elapsed: ' + formatElapsed(Date.now() - enrichGenerationStartTime);
+    }, 1000);
+
+    var accountName = loadedArchive.account.name;
+
+    fetchCommentHistory(accountName, pace, signal, function(scanned, matched){
+      enrichProgressLabel.textContent = 'Scanned ' + scanned.toLocaleString() + ' operations, found ' + matched.toLocaleString() + ' matching posts/comments...';
+    }).then(function(commentOps){
+      enrichProgressLabel.textContent = 'Merging into archive...';
+
+      var map = buildEnrichmentMap(commentOps);
+
+      // Deep-copy so the original loaded object is never mutated in place —
+      // Enrich adds to a new archive, it doesn't alter what was loaded.
+      var archive = JSON.parse(JSON.stringify(loadedArchive));
+
+      var matchedCount = 0;
+      var titleUpgradedCount = 0;
+
+      archive.entries.forEach(function(entry){
+        var hit = map[entry.permlink];
+        if(!hit) return;
+        matchedCount++;
+
+        entry.trx_id = hit.trx_id;
+        entry.block = hit.block;
+
+        if(entry.type === 'post' && hit.original_title){
+          if(entry.title !== hit.original_title){
+            entry.title = hit.original_title;
+            titleUpgradedCount++;
+          }
+          if(hit.latest_title){
+            entry.latest_title = hit.latest_title;
+          }
+        }
+      });
+
+      var totalEntries = archive.entries.length;
+      var coverage = totalEntries === 0 ? 'none' : (matchedCount === totalEntries ? 'full' : (matchedCount > 0 ? 'partial' : 'none'));
+
+      if(!archive.manifest) archive.manifest = {};
+      archive.manifest.transactions = coverage;
+      archive.manifest.blocks = coverage;
+      if(coverage === 'full' || coverage === 'partial'){
+        archive.manifest.titles = (archive.manifest.titles === 'full') ? 'full' : (coverage === 'full' ? 'full' : 'partial');
+      }
+
+      archive.enrichment = {
+        generator: "Hive Legacy Enricher",
+        version: ENRICH_VERSION,
+        enriched_at: new Date().toISOString()
+      };
+
+      enrichedArchive = archive;
+
+      clearInterval(enrichTimerInterval);
+      enrichLastElapsedLabel = formatElapsed(Date.now() - enrichGenerationStartTime);
+      enrichProgressLabel.textContent = 'Done.';
+
+      setTimeout(function(){
+        enrichProgressWrap.classList.remove('show');
+        cancelEnrichBtn.style.display = 'none';
+        enrichPreviewCard.classList.remove('show');
+        enrichResultCard.classList.add('show');
+        enrichResultSummary.textContent = matchedCount.toLocaleString() + ' of ' + totalEntries.toLocaleString() +
+          ' entries enriched with transaction/block data (' + titleUpgradedCount.toLocaleString() + ' titles completed) in ' +
+          enrichLastElapsedLabel + '. Ready to download.';
+        enrichBtn.disabled = false;
+      }, 400);
+
+    }).catch(function(err){
+      clearInterval(enrichTimerInterval);
+      cancelEnrichBtn.style.display = 'none';
+      enrichProgressFill.classList.add('stopped');
+      if(err.message === 'Cancelled.'){
+        enrichProgressLabel.textContent = 'Cancelled.';
+      } else {
+        enrichProgressLabel.textContent = 'Error: ' + err.message;
+      }
+      enrichBtn.disabled = false;
+      console.error(err);
+    });
+  });
+
+  cancelEnrichBtn.addEventListener('click', function(){
+    if(enrichAbortController){ enrichAbortController.abort(); }
+  });
+
+  enrichDownloadBtn.addEventListener('click', function(){
+    if(!enrichedArchive) return;
+    var blob = new Blob([JSON.stringify(enrichedArchive, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    var dateStr = new Date().toISOString().split('T')[0];
+    a.href = url;
+    a.download = 'hive-legacy-' + enrichedArchive.account.name + '-enriched-' + dateStr + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  enrichResetBtn.addEventListener('click', resetEnrichFlow);
 
 })();
 </script>
