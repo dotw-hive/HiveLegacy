@@ -61,6 +61,8 @@ Manifest fields:
 - **`account_metadata`** — Purpose: coverage of the `account` block itself (name, created).
 - **`posts`** / **`comments`** — Purpose: coverage of the core content pointers that make up `entries`.
 - **`titles`** — Meaning: `"partial"` indicates title text may be truncated due to limitations of the Hive API used during generation. The permlink remains the reliable identifier regardless of title completeness.
+
+  A title can also be `null` on individual entries, distinct from truncation. Early dBuzz — a Twitter-style microblogging frontend on Hive — allowed posts to be published with no title at all; this was how dBuzz's frontend worked at the time, not a limitation of this tool or an error in the archive. A `null` title on an entry reflects what was actually published on-chain.
 - **`last_update`** — Purpose: whether the archive records if the original author edited a post after publication. This is preserved as part of the author's own publishing history — it reflects the author's own action, not an external reaction to their content. Currently `"none"`; planned for future capture.
 - **`children`** — Purpose: whether the archive records the number of replies a post had at generation time. This is preserved as evidence that discussion occurred, not as a social or popularity metric — it tells a future reader "this generated conversation," not "this was well-received." Currently `"none"`; planned for future capture.
 - **`bodies`** — Full post/comment text. Permanently `"none"` by design — see Philosophy in `README.md`. This is a pointer archive, not a content mirror.

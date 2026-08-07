@@ -154,7 +154,7 @@
         },
         "title": {
           "type": ["string", "null"],
-          "description": "Post title, possibly truncated by the source API (see manifest.titles). Null for posts with no title, such as microblog-style content (e.g. dBuzz) that has no title field at all."
+          "description": "Post title, possibly truncated by the source API (see manifest.titles). Null for entries with no title — e.g. early dBuzz, whose frontend allowed posts to be published without one. See SCHEMA.md for details."
         },
         "tags": {
           "type": "array",
