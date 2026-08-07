@@ -274,6 +274,11 @@
     background: repeating-linear-gradient(45deg, var(--brass) 0 6px, var(--stamp) 6px 12px);
     animation: progress-indeterminate 1.4s ease-in-out infinite;
   }
+  .progress-fill.stopped{
+    animation: none;
+    width: 100%;
+    opacity: 0.4;
+  }
   @keyframes progress-indeterminate{
     0%   { transform: translateX(-100%); }
     100% { transform: translateX(250%); }
@@ -337,6 +342,7 @@
     <div class="lookup-row">
       <input type="text" id="usernameInput" placeholder="username (no @)" autocomplete="off" spellcheck="false">
       <button id="lookupBtn">Look Up</button>
+      <button id="cancelLookupBtn" class="secondary" style="display:none;">Cancel</button>
     </div>
     <div id="lookupError" class="error-line" style="display:none;"></div>
   </div>
@@ -386,6 +392,7 @@
 
     <div class="btn-row">
       <button id="generateBtn">Generate Archive</button>
+      <button id="cancelGenerateBtn" class="secondary" style="display:none;">Cancel</button>
     </div>
   </div>
 
@@ -415,9 +422,11 @@
   var PAGE_LIMIT = 20;
   var LARGE_ACCOUNT_THRESHOLD = 5000;
   var CONSIDERATE_DELAY_MS = 150;
+  var REQUEST_TIMEOUT_MS = 10000;
 
   var usernameInput = document.getElementById('usernameInput');
   var lookupBtn = document.getElementById('lookupBtn');
+  var cancelLookupBtn = document.getElementById('cancelLookupBtn');
   var lookupError = document.getElementById('lookupError');
   var previewCard = document.getElementById('previewCard');
   var previewName = document.getElementById('previewName');
@@ -430,6 +439,7 @@
   var paceConsiderateBtn = document.getElementById('paceConsiderateBtn');
   var paceNote = document.getElementById('paceNote');
   var generateBtn = document.getElementById('generateBtn');
+  var cancelGenerateBtn = document.getElementById('cancelGenerateBtn');
   var progressWrap = document.getElementById('progressWrap');
   var progressFill = document.getElementById('progressFill');
   var progressLabel = document.getElementById('progressLabel');
@@ -444,6 +454,8 @@
   var currentArchive = null;
   var currentPace = 'fast';
   var timerInterval = null;
+  var lookupAbortController = null;
+  var generateAbortController = null;
   var generationStartTime = null;
   var lastElapsedLabel = '';
 
@@ -471,28 +483,54 @@
     return new Promise(function(resolve){ setTimeout(resolve, ms); });
   }
 
-  function rpcCall(method, params){
+  function rpcCall(method, params, externalSignal){
     var body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params });
     var nodeIndex = 0;
 
     function tryNode(){
+      if(externalSignal && externalSignal.aborted){
+        return Promise.reject(new Error("Cancelled."));
+      }
       if(nodeIndex >= NODES.length){
         return Promise.reject(new Error("All nodes failed for " + method));
       }
       var node = NODES[nodeIndex];
       nodeIndex++;
+
+      var timedOut = false;
+      var controller = new AbortController();
+      var timeoutId = setTimeout(function(){
+        timedOut = true;
+        controller.abort();
+      }, REQUEST_TIMEOUT_MS);
+
+      var onExternalAbort = function(){ controller.abort(); };
+      if(externalSignal){ externalSignal.addEventListener('abort', onExternalAbort); }
+
+      function cleanup(){
+        clearTimeout(timeoutId);
+        if(externalSignal){ externalSignal.removeEventListener('abort', onExternalAbort); }
+      }
+
       return fetch(node, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: body
+        body: body,
+        signal: controller.signal
       }).then(function(res){
+        cleanup();
         if(!res.ok) throw new Error("HTTP " + res.status);
         return res.json();
       }).then(function(json){
         if(json.error) throw new Error(json.error.message || "RPC error");
         return json.result;
       }).catch(function(err){
-        console.warn("Node failed (" + node + "):", err.message);
+        cleanup();
+        if(externalSignal && externalSignal.aborted){
+          throw new Error("Cancelled.");
+        }
+        var reason = timedOut ? ("timed out after " + (REQUEST_TIMEOUT_MS / 1000) + "s") : err.message;
+        console.warn("Node failed (" + node + "):", reason);
         return tryNode();
       });
     }
@@ -532,10 +570,17 @@
 
   function resetFlow(){
     clearInterval(timerInterval);
+    if(lookupAbortController){ lookupAbortController.abort(); }
+    if(generateAbortController){ generateAbortController.abort(); }
+    lookupAbortController = null;
+    generateAbortController = null;
     lookupBtn.disabled = false;
+    cancelLookupBtn.style.display = 'none';
+    cancelGenerateBtn.style.display = 'none';
     previewCard.classList.remove('show');
     resultCard.classList.remove('show');
     progressWrap.classList.remove('show');
+    progressFill.classList.remove('stopped');
     progressLabel.textContent = '';
     progressTimer.textContent = '';
     largeAccountNotice.classList.remove('show');
@@ -564,20 +609,26 @@
     setError(null);
     lookupBtn.disabled = true;
     lookupBtn.textContent = 'Looking...';
+    cancelLookupBtn.style.display = 'inline-block';
     previewCard.classList.remove('show');
     resultCard.classList.remove('show');
     progressWrap.classList.remove('show');
+    progressFill.classList.remove('stopped');
     progressLabel.textContent = '';
     progressTimer.textContent = '';
     largeAccountNotice.classList.remove('show');
     setPace('fast');
 
+    lookupAbortController = new AbortController();
+    var signal = lookupAbortController.signal;
+
     Promise.all([
-      rpcCall("condenser_api.get_accounts", [[uname]]),
-      rpcCall("bridge.get_profile", { account: uname }).catch(function(){ return null; })
+      rpcCall("condenser_api.get_accounts", [[uname]], signal),
+      rpcCall("bridge.get_profile", { account: uname }, signal).catch(function(){ return null; })
     ]).then(function(results){
       lookupBtn.disabled = false;
       lookupBtn.textContent = 'Look Up';
+      cancelLookupBtn.style.display = 'none';
       var result = results[0];
       var profile = results[1];
       if(!result || result.length === 0){
@@ -609,9 +660,18 @@
     }).catch(function(err){
       lookupBtn.disabled = false;
       lookupBtn.textContent = 'Look Up';
-      setError('Lookup failed: ' + err.message);
+      cancelLookupBtn.style.display = 'none';
+      if(err.message === 'Cancelled.'){
+        setError('Lookup cancelled.');
+      } else {
+        setError('Lookup failed: ' + err.message);
+      }
     });
   }
+
+  cancelLookupBtn.addEventListener('click', function(){
+    if(lookupAbortController){ lookupAbortController.abort(); }
+  });
 
   function parseJsonMetadata(raw){
     if(!raw) return {};
@@ -624,7 +684,7 @@
   }
 
   // Fetches all pages for a given sort ("posts" or "comments") via bridge.get_account_posts
-  function fetchAllPosts(account, sort, pace, onProgress){
+  function fetchAllPosts(account, sort, pace, signal, onProgress){
     var collected = [];
     var seen = {};
     var startAuthor = "";
@@ -637,7 +697,7 @@
         limit: PAGE_LIMIT,
         start_author: startAuthor || undefined,
         start_permlink: startPermlink || undefined
-      }).then(function(page){
+      }, signal).then(function(page){
         if(!page || page.length === 0) return collected;
 
         var newOnes = 0;
@@ -674,8 +734,13 @@
     if(!currentUsername) return;
     generateBtn.disabled = true;
     lookupBtn.disabled = true;
+    cancelGenerateBtn.style.display = 'inline-block';
     progressWrap.classList.add('show');
+    progressFill.classList.remove('stopped');
     progressLabel.textContent = 'Fetching posts...';
+
+    generateAbortController = new AbortController();
+    var signal = generateAbortController.signal;
 
     generationStartTime = Date.now();
     progressTimer.textContent = 'Elapsed: 0:00';
@@ -690,12 +755,12 @@
       progressLabel.textContent = 'Fetched ' + totalCollected.posts + ' posts, ' + totalCollected.comments + ' comments so far...';
     }
 
-    fetchAllPosts(currentUsername, 'posts', pace, function(count){
+    fetchAllPosts(currentUsername, 'posts', pace, signal, function(count){
       totalCollected.posts = count;
       updateProgress();
     }).then(function(rawPosts){
       progressLabel.textContent = 'Fetching comments...';
-      return fetchAllPosts(currentUsername, 'comments', pace, function(count){
+      return fetchAllPosts(currentUsername, 'comments', pace, signal, function(count){
         totalCollected.comments = count;
         updateProgress();
       }).then(function(rawComments){
@@ -785,6 +850,7 @@
 
       setTimeout(function(){
         progressWrap.classList.remove('show');
+        cancelGenerateBtn.style.display = 'none';
         previewCard.classList.remove('show');
         resultCard.classList.add('show');
         resultSummary.textContent = postCount.toLocaleString() + ' posts and ' + commentCount.toLocaleString() +
@@ -795,11 +861,21 @@
 
     }).catch(function(err){
       clearInterval(timerInterval);
-      progressLabel.textContent = 'Error: ' + err.message;
+      cancelGenerateBtn.style.display = 'none';
+      progressFill.classList.add('stopped');
+      if(err.message === 'Cancelled.'){
+        progressLabel.textContent = 'Cancelled.';
+      } else {
+        progressLabel.textContent = 'Error: ' + err.message;
+      }
       generateBtn.disabled = false;
       lookupBtn.disabled = false;
       console.error(err);
     });
+  });
+
+  cancelGenerateBtn.addEventListener('click', function(){
+    if(generateAbortController){ generateAbortController.abort(); }
   });
 
   downloadBtn.addEventListener('click', function(){
