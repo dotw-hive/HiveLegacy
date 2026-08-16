@@ -34,49 +34,63 @@ It also runs as a drop-in static file on any host, same as HiveWrite and HiveDro
 
 ## Generate vs. Enrich
 
-Hive Legacy is built as two separate, decoupled tools sharing one archive format:
+Hive Legacy is built as two separate, decoupled tools, presented as tabs, sharing one archive format:
 
 **Generate** — the core tool. Enter a Hive username, preview the account (post/comment count, creation date), then pull the account's full post and comment history via public Hive API nodes into a portable JSON archive.
 
-**Enrich** *(planned)* — a second, optional pass that takes an existing Hive Legacy archive and adds deeper detail — starting with `trx_id` and block number per entry — by walking the account's full on-chain history and matching it back to the archive by `author`/`permlink`. Enrichment is additive only; it never changes what Generate already captured, only adds to it. See `enrichment` in `SCHEMA.md` for how this is recorded.
+**Enrich** — a second, optional pass. Upload an existing Hive Legacy archive and Enrich walks the account's full on-chain operation history, matching it back to the archive by `author`/`permlink`, to add:
 
-The split exists so the fast, lightweight default path (Generate) never has to carry the cost of the slower, heavier one (Enrich) — most people only need the former.
+- `trx_id` and block number per entry — lets any entry be located and verified directly on-chain
+- The full, untruncated original post title (upgrading Generate's possibly-truncated version — see `manifest.titles` below)
+- `latest_title`, added only when a post's title was edited after publication — the original `title` field always reflects what was first published, `latest_title` reflects what the author ultimately left on the blockchain
+
+Enrichment is additive only; it never changes or overwrites what Generate already captured, only adds to it. See `enrichment` in [`SCHEMA.md`](./SCHEMA.md) for how this is recorded, and the `titles`/`latest_title` entries there for the full reasoning behind the title-handling approach.
+
+Enrich validates any uploaded file against the full archive format before running — malformed JSON, archives from very old versions of this tool, or hand-edited/corrupted files are rejected with a clear message rather than silently producing a broken result.
+
+The Generate/Enrich split exists so the fast, lightweight default path (Generate) never has to carry the cost of the slower, heavier one (Enrich) — most people only need the former.
 
 ## Archive format
 
 The archive is JSON. Full field-by-field documentation, including *why* each field exists, lives in [`SCHEMA.md`](./SCHEMA.md). A machine-readable [`hive-legacy.schema.json`](./hive-legacy.schema.json) is also provided for automated validation.
 
-Current scope is **posts and comments only** — the content a user actually authored. Wallet/transaction history is intentionally out of scope for Generate, since most Hive frontends already provide transaction history export through their own wallet views. `trx_id`/block number are deferred to the optional Enrich pass rather than the default flow, to keep Generate fast and light on public nodes.
+Current scope for Generate is **posts and comments only** — the content a user actually authored. Wallet/transaction history is intentionally out of scope, since most Hive frontends already provide transaction history export through their own wallet views. `trx_id`/block number/full titles are deferred to the optional Enrich pass rather than the default flow, to keep Generate fast and light on public nodes.
 
 ## Node etiquette
 
-Hive Legacy talks to public, largely volunteer-run Hive API nodes. Pulling a large account's full history means hundreds of sequential requests in a short window — not something to do carelessly.
+Hive Legacy talks to public, largely volunteer-run Hive API nodes. Pulling a large account's full history means hundreds (or thousands) of sequential requests in a short window — not something to do carelessly.
 
-- **Considerate mode** (a short delay between requests) is offered as a toggle, and the tool will suggest it for large accounts.
-- **Fast mode** is available for anyone who wants it — the choice is always the user's, this is a suggestion, not a restriction.
+- **Fast** and **Considerate** (a short delay between requests) are both available as a toggle on both Generate and Enrich. The choice is always the user's — this is a suggestion, not a restriction.
+- **Generate defaults to Fast.** For accounts with 5,000+ combined posts/comments, a notice explains the tradeoff and offers a one-click switch to Considerate, but nothing switches silently — Fast stays selected unless you act.
+- **Enrich defaults to Considerate.** Enrich walks an account's full on-chain operation history (not just posts/comments), which is a heavier request pattern than Generate's — the more cautious default reflects that.
+- Every request has a timeout, and both Generate and Enrich have a Cancel button — if a node hangs or you change your mind mid-run, you're never stuck waiting it out or needing to refresh the page.
 - If you operate a Hive node and have thoughts on request patterns that would or wouldn't concern you, feedback is genuinely welcome — this behavior was designed carefully but without direct node-operator input, and may be adjusted based on real feedback.
 
 ## FAQ
 
 **Why isn't there a delay by default?**
-There is — Considerate mode is the default. See "Node etiquette" above.
+Generate defaults to Fast; Enrich defaults to Considerate. See "Node etiquette" above for why they differ.
 
 **Why doesn't the archive include post bodies?**
 By design. Hive Legacy preserves pointers and metadata, not content — see Philosophy above.
 
 **Why are some titles truncated?**
-The Hive API this tool queries returns titles pre-truncated for long posts. The permlink is the reliable identifier regardless. See `manifest.titles` in `SCHEMA.md`.
+Generate's title comes from an API that pre-truncates long titles. The permlink is the reliable identifier regardless. Running Enrich backfills the full original title — see `manifest.titles` in `SCHEMA.md`.
+
+**Why does an entry have both `title` and `latest_title`?**
+It means the post was edited after publication. `title` is always what was originally published; `latest_title` is what it was most recently changed to. Only appears after Enrich, and only when the two actually differ.
+
+**I uploaded an archive to Enrich and got a "malformed or invalid" error — what happened?**
+Enrich only accepts complete, well-formed Hive Legacy archives. If the file is corrupted, hand-edited, or from a very old version of this tool, it's rejected rather than silently producing a broken result. If you know the account name, generating a fresh archive is the fastest fix.
 
 **Can I archive someone else's account, or only my own?**
 Yes — this only reads public blockchain data, the same as any Hive frontend. No login or account ownership is required to generate an archive for any public username.
 
 ## Roadmap
 
-- [ ] Enrich tool (see "Generate vs. Enrich" above)
 - [ ] HTML viewer export (offline, human-friendly view of an archive)
 - [ ] Markdown / CSV / PDF export
 - [ ] ZIP packaging
-- [ ] Optional "fetch full titles" mode (off by default) — backfills untruncated titles via a per-post lookup; warns the user this means significantly more API calls and run time
 - [ ] Statistics and timeline generation
 - [ ] A **SoloHive Legacy theme** — reads a Hive Legacy archive and renders an offline, human-friendly version of a user's Hive history
 
@@ -86,7 +100,11 @@ Hive Legacy preserves the map to the content. SoloHive displays the content. The
 
 ## Notes on running against large accounts
 
-Tested against accounts ranging from ~100 entries to 13,000+ entries (spanning pre-Hive-fork Steem history through present day) with no node throttling observed at any tested size. Uses a fallback list of public API nodes with automatic retry if one fails to respond.
+**Generate** has been tested against accounts ranging from ~100 entries to 13,000+ entries (spanning pre-Hive-fork Steem history through present day) with no node throttling observed at any tested size.
+
+**Enrich** has been tested successfully but not yet stress-tested at that scale — it walks a heavier endpoint (full account operation history, not just posts/comments), so very large accounts may behave differently. Considerate mode's default-on behavior for Enrich is a deliberate precaution given this hasn't been fully proven out yet.
+
+Both tools use a fallback list of public API nodes with automatic retry if one fails or times out.
 
 ## License
 
