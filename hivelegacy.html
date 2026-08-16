@@ -1144,6 +1144,55 @@
     return '<span class="' + cls + '">' + value + '</span>';
   }
 
+  // Mirrors the required fields/shapes in hive-legacy.schema.json. Kept as a
+  // hand-written check (no external validator library) to stay consistent
+  // with the project's no-dependency philosophy. This intentionally rejects
+  // any archive that doesn't fully conform — including old v0.1 files,
+  // hand-edited/corrupted files missing manifest or summary, and anything
+  // that isn't a Hive Legacy archive at all.
+  function isValidHiveLegacyArchive(parsed){
+    if(!parsed || typeof parsed !== 'object') return false;
+    if(parsed.schema !== 'hive-legacy-archive') return false;
+    if(typeof parsed.version !== 'string' || !/^[0-9]+\.[0-9]+$/.test(parsed.version)) return false;
+    if(typeof parsed.generated_at !== 'string') return false;
+    if(typeof parsed.generator !== 'string') return false;
+
+    if(parsed.enrichment !== null){
+      if(!parsed.enrichment || typeof parsed.enrichment !== 'object') return false;
+      var enr = parsed.enrichment;
+      if(typeof enr.generator !== 'string' || typeof enr.version !== 'string' || typeof enr.enriched_at !== 'string') return false;
+    }
+
+    if(!parsed.account || typeof parsed.account !== 'object') return false;
+    if(typeof parsed.account.name !== 'string' || typeof parsed.account.created !== 'string') return false;
+
+    var requiredManifestFields = ['account_metadata','posts','comments','titles','last_update','children','bodies','transactions','blocks','rewards','votes','reblogs'];
+    if(!parsed.manifest || typeof parsed.manifest !== 'object') return false;
+    for(var i = 0; i < requiredManifestFields.length; i++){
+      var v = parsed.manifest[requiredManifestFields[i]];
+      if(v !== 'full' && v !== 'partial' && v !== 'none') return false;
+    }
+
+    if(!parsed.summary || typeof parsed.summary !== 'object') return false;
+    if(typeof parsed.summary.post_count !== 'number' || typeof parsed.summary.comment_count !== 'number' || typeof parsed.summary.total_entries !== 'number') return false;
+
+    if(!Array.isArray(parsed.entries)) return false;
+    for(var j = 0; j < parsed.entries.length; j++){
+      var e = parsed.entries[j];
+      if(!e || typeof e !== 'object') return false;
+      if(e.type !== 'post' && e.type !== 'comment') return false;
+      if(typeof e.author !== 'string' || typeof e.permlink !== 'string' || typeof e.created !== 'string') return false;
+      if(e.category !== null && typeof e.category !== 'string') return false;
+      if(e.type === 'comment'){
+        if(e.parent_author !== null && typeof e.parent_author !== 'string') return false;
+        if(e.parent_permlink !== null && typeof e.parent_permlink !== 'string') return false;
+      }
+      if('title' in e && e.title !== null && typeof e.title !== 'string') return false;
+    }
+
+    return true;
+  }
+
   function handleArchiveFile(file){
     setEnrichFileError(null);
     enrichPreviewCard.classList.remove('show');
@@ -1158,8 +1207,8 @@
         setEnrichFileError('That file isn\'t valid JSON.');
         return;
       }
-      if(!parsed || parsed.schema !== 'hive-legacy-archive' || !parsed.account || !Array.isArray(parsed.entries)){
-        setEnrichFileError('That doesn\'t look like a Hive Legacy archive.');
+      if(!isValidHiveLegacyArchive(parsed)){
+        setEnrichFileError('Archive upload is malformed or invalid. If you know the account name, you can generate a fresh archive instead using the Generate tab.');
         return;
       }
 
