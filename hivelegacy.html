@@ -557,6 +557,9 @@
   var LARGE_ACCOUNT_THRESHOLD = 5000;
   var CONSIDERATE_DELAY_MS = 150;
   var REQUEST_TIMEOUT_MS = 10000;
+  var HISTORY_LIMIT = 1000;
+  var ENRICH_VERSION = "0.2";
+  var CANCELLED_MESSAGE = "Cancelled.";
 
   var usernameInput = document.getElementById('usernameInput');
   var lookupBtn = document.getElementById('lookupBtn');
@@ -586,25 +589,13 @@
   var currentUsername = null;
   var currentAccountCreated = null;
   var currentArchive = null;
-  var currentPace = 'fast';
-  var timerInterval = null;
   var lookupAbortController = null;
   var generateAbortController = null;
-  var generationStartTime = null;
-  var lastElapsedLabel = '';
 
-  function setPace(pace){
-    currentPace = pace;
-    paceFastBtn.classList.toggle('active', pace === 'fast');
-    paceConsiderateBtn.classList.toggle('active', pace === 'considerate');
-    paceNote.textContent = (pace === 'considerate')
-      ? 'Adds a short delay between requests to go easier on public Hive nodes.'
-      : 'No delay between requests.';
-  }
+  var generatePace = createPaceController(paceFastBtn, paceConsiderateBtn, paceNote, 'fast');
+  switchToConsiderateBtn.addEventListener('click', function(){ generatePace.set('considerate'); });
 
-  paceFastBtn.addEventListener('click', function(){ setPace('fast'); });
-  paceConsiderateBtn.addEventListener('click', function(){ setPace('considerate'); });
-  switchToConsiderateBtn.addEventListener('click', function(){ setPace('considerate'); });
+  var generateTimer = createRunTimer(progressTimer);
 
   function formatElapsed(ms){
     var totalSec = Math.floor(ms / 1000);
@@ -617,13 +608,79 @@
     return new Promise(function(resolve){ setTimeout(resolve, ms); });
   }
 
+  // Wires a Fast/Considerate pace toggle. Both Generate and Enrich use this
+  // same UI pattern, just with their own buttons/note element and their own
+  // default (Generate defaults to fast, Enrich to considerate — see
+  // README's "Node etiquette" section for why they differ).
+  function createPaceController(fastBtn, considerateBtn, noteEl, defaultPace){
+    var pace = defaultPace;
+    function set(p){
+      pace = p;
+      fastBtn.classList.toggle('active', p === 'fast');
+      considerateBtn.classList.toggle('active', p === 'considerate');
+      noteEl.textContent = (p === 'considerate')
+        ? 'Adds a short delay between requests to go easier on public Hive nodes.'
+        : 'No delay between requests.';
+    }
+    fastBtn.addEventListener('click', function(){ set('fast'); });
+    considerateBtn.addEventListener('click', function(){ set('considerate'); });
+    return { set: set, get: function(){ return pace; } };
+  }
+
+  // Wires the "Elapsed: m:ss" live timer shown during a run. Both Generate
+  // and Enrich use this identically, differing only in which element they
+  // write to.
+  function createRunTimer(timerEl){
+    var intervalId = null;
+    var startTime = null;
+    return {
+      start: function(){
+        startTime = Date.now();
+        timerEl.textContent = 'Elapsed: 0:00';
+        intervalId = setInterval(function(){
+          timerEl.textContent = 'Elapsed: ' + formatElapsed(Date.now() - startTime);
+        }, 1000);
+      },
+      stop: function(){
+        clearInterval(intervalId);
+        return startTime === null ? '' : formatElapsed(Date.now() - startTime);
+      }
+    };
+  }
+
+  // Both Generate and Enrich distinguish a user-initiated cancel from a
+  // genuine error the same way — centralized here so the two can't drift
+  // out of sync with each other or with rpcCall's CANCELLED_MESSAGE.
+  function describeRunOutcome(err){
+    return (err && err.message === CANCELLED_MESSAGE) ? 'Cancelled.' : 'Error: ' + (err && err.message);
+  }
+
+  function markProgressStopped(fillEl, labelEl, err){
+    fillEl.classList.add('stopped');
+    labelEl.textContent = describeRunOutcome(err);
+  }
+
+  // Shared by both Download buttons — identical blob-creation-and-click
+  // flow, just different data/filename.
+  function downloadJson(data, filename){
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   function rpcCall(method, params, externalSignal){
     var body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params });
     var nodeIndex = 0;
 
     function tryNode(){
       if(externalSignal && externalSignal.aborted){
-        return Promise.reject(new Error("Cancelled."));
+        return Promise.reject(new Error(CANCELLED_MESSAGE));
       }
       if(nodeIndex >= NODES.length){
         return Promise.reject(new Error("All nodes failed for " + method));
@@ -661,7 +718,7 @@
       }).catch(function(err){
         cleanup();
         if(externalSignal && externalSignal.aborted){
-          throw new Error("Cancelled.");
+          throw new Error(CANCELLED_MESSAGE);
         }
         var reason = timedOut ? ("timed out after " + (REQUEST_TIMEOUT_MS / 1000) + "s") : err.message;
         console.warn("Node failed (" + node + "):", reason);
@@ -703,7 +760,7 @@
   }
 
   function resetFlow(){
-    clearInterval(timerInterval);
+    generateTimer.stop();
     if(lookupAbortController){ lookupAbortController.abort(); }
     if(generateAbortController){ generateAbortController.abort(); }
     lookupAbortController = null;
@@ -718,7 +775,7 @@
     progressLabel.textContent = '';
     progressTimer.textContent = '';
     largeAccountNotice.classList.remove('show');
-    setPace('fast');
+    generatePace.set('fast');
     generateBtn.style.display = 'inline-block';
     generateBtn.disabled = false;
     setError(null);
@@ -751,7 +808,8 @@
     progressLabel.textContent = '';
     progressTimer.textContent = '';
     largeAccountNotice.classList.remove('show');
-    setPace('fast');
+    generatePace.set('fast');
+    currentArchive = null;
 
     lookupAbortController = new AbortController();
     var signal = lookupAbortController.signal;
@@ -774,7 +832,7 @@
       currentAccountCreated = acct.created || null;
       previewName.textContent = '@' + acct.name;
       statPostCount.textContent = (acct.post_count !== undefined) ? acct.post_count.toLocaleString() : '—';
-      statCreated.textContent = acct.created ? acct.created.split('T')[0].split(' ')[0].substring(0,10) : '—';
+      statCreated.textContent = acct.created ? acct.created.substring(0, 10) : '—';
 
       if(acct.post_count !== undefined && acct.post_count >= LARGE_ACCOUNT_THRESHOLD){
         largeAccountNotice.classList.add('show');
@@ -795,7 +853,7 @@
       lookupBtn.disabled = false;
       lookupBtn.textContent = 'Look Up';
       cancelLookupBtn.style.display = 'none';
-      if(err.message === 'Cancelled.'){
+      if(err.message === CANCELLED_MESSAGE){
         setError('Lookup cancelled.');
       } else {
         setError('Lookup failed: ' + err.message);
@@ -876,13 +934,9 @@
     generateAbortController = new AbortController();
     var signal = generateAbortController.signal;
 
-    generationStartTime = Date.now();
-    progressTimer.textContent = 'Elapsed: 0:00';
-    timerInterval = setInterval(function(){
-      progressTimer.textContent = 'Elapsed: ' + formatElapsed(Date.now() - generationStartTime);
-    }, 1000);
+    generateTimer.start();
 
-    var pace = currentPace;
+    var pace = generatePace.get();
     var totalCollected = { posts: 0, comments: 0 };
 
     function updateProgress(){
@@ -978,8 +1032,7 @@
         entries: entries
       };
 
-      clearInterval(timerInterval);
-      lastElapsedLabel = formatElapsed(Date.now() - generationStartTime);
+      var elapsedLabel = generateTimer.stop();
       progressLabel.textContent = 'Done.';
 
       setTimeout(function(){
@@ -988,20 +1041,16 @@
         previewCard.classList.remove('show');
         resultCard.classList.add('show');
         resultSummary.textContent = postCount.toLocaleString() + ' posts and ' + commentCount.toLocaleString() +
-          ' comments indexed for @' + currentUsername + ' in ' + lastElapsedLabel + '. Ready to download.';
+          ' comments indexed for @' + currentUsername + ' in ' + elapsedLabel + '. Ready to download.';
         generateBtn.disabled = false;
         lookupBtn.disabled = false;
       }, 400);
 
     }).catch(function(err){
-      clearInterval(timerInterval);
+      generateTimer.stop();
       cancelGenerateBtn.style.display = 'none';
-      progressFill.classList.add('stopped');
-      if(err.message === 'Cancelled.'){
-        progressLabel.textContent = 'Cancelled.';
-      } else {
-        progressLabel.textContent = 'Error: ' + err.message;
-      }
+      markProgressStopped(progressFill, progressLabel, err);
+      currentArchive = null;
       generateBtn.disabled = false;
       lookupBtn.disabled = false;
       console.error(err);
@@ -1014,16 +1063,8 @@
 
   downloadBtn.addEventListener('click', function(){
     if(!currentArchive) return;
-    var blob = new Blob([JSON.stringify(currentArchive, null, 2)], { type: 'application/json' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
     var dateStr = new Date().toISOString().split('T')[0];
-    a.href = url;
-    a.download = 'hive-legacy-' + currentArchive.account.name + '-' + dateStr + '.json';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadJson(currentArchive, 'hive-legacy-' + currentArchive.account.name + '-' + dateStr + '.json');
   });
 
   resetBtn.addEventListener('click', resetFlow);
@@ -1031,9 +1072,6 @@
   // =========================================================
   // Enrich
   // =========================================================
-
-  var HISTORY_LIMIT = 1000;
-  var ENRICH_VERSION = "0.2";
 
   var tabGenerateBtn = document.getElementById('tabGenerateBtn');
   var tabEnrichBtn = document.getElementById('tabEnrichBtn');
@@ -1067,11 +1105,12 @@
 
   var loadedArchive = null;
   var enrichedArchive = null;
-  var currentEnrichPace = 'considerate';
   var enrichAbortController = null;
-  var enrichTimerInterval = null;
-  var enrichGenerationStartTime = null;
-  var enrichLastElapsedLabel = '';
+
+  var enrichPace = createPaceController(enrichPaceFastBtn, enrichPaceConsiderateBtn, enrichPaceNote, 'considerate');
+  enrichSwitchToConsiderateBtn.addEventListener('click', function(){ enrichPace.set('considerate'); });
+
+  var enrichTimer = createRunTimer(enrichProgressTimer);
 
   function switchMode(mode){
     tabGenerateBtn.classList.toggle('active', mode === 'generate');
@@ -1081,18 +1120,6 @@
   }
   tabGenerateBtn.addEventListener('click', function(){ switchMode('generate'); });
   tabEnrichBtn.addEventListener('click', function(){ switchMode('enrich'); });
-
-  function setEnrichPace(pace){
-    currentEnrichPace = pace;
-    enrichPaceFastBtn.classList.toggle('active', pace === 'fast');
-    enrichPaceConsiderateBtn.classList.toggle('active', pace === 'considerate');
-    enrichPaceNote.textContent = (pace === 'considerate')
-      ? 'Adds a short delay between requests to go easier on public Hive nodes.'
-      : 'No delay between requests.';
-  }
-  enrichPaceFastBtn.addEventListener('click', function(){ setEnrichPace('fast'); });
-  enrichPaceConsiderateBtn.addEventListener('click', function(){ setEnrichPace('considerate'); });
-  enrichSwitchToConsiderateBtn.addEventListener('click', function(){ setEnrichPace('considerate'); });
 
   function setEnrichFileError(msg){
     if(msg){
@@ -1104,7 +1131,7 @@
   }
 
   function resetEnrichFlow(){
-    clearInterval(enrichTimerInterval);
+    enrichTimer.stop();
     if(enrichAbortController){ enrichAbortController.abort(); }
     enrichAbortController = null;
     loadedArchive = null;
@@ -1119,7 +1146,7 @@
     enrichProgressLabel.textContent = '';
     enrichProgressTimer.textContent = '';
     enrichLargeAccountNotice.classList.remove('show');
-    setEnrichPace('considerate');
+    enrichPace.set('considerate');
     setEnrichFileError(null);
     enrichBtn.disabled = false;
     cancelEnrichBtn.style.display = 'none';
@@ -1217,7 +1244,7 @@
       fileDropZone.textContent = 'Loaded: ' + file.name;
 
       enrichPreviewName.textContent = '@' + parsed.account.name;
-      enrichEntryCount.textContent = (parsed.entries.length || 0).toLocaleString();
+      enrichEntryCount.textContent = parsed.entries.length.toLocaleString();
       enrichGeneratedAt.textContent = parsed.generated_at ? parsed.generated_at.split('T')[0] : '—';
       enrichAlreadyEnriched.textContent = parsed.enrichment ? 'Yes' : 'No';
 
@@ -1335,13 +1362,9 @@
 
     enrichAbortController = new AbortController();
     var signal = enrichAbortController.signal;
-    var pace = currentEnrichPace;
+    var pace = enrichPace.get();
 
-    enrichGenerationStartTime = Date.now();
-    enrichProgressTimer.textContent = 'Elapsed: 0:00';
-    enrichTimerInterval = setInterval(function(){
-      enrichProgressTimer.textContent = 'Elapsed: ' + formatElapsed(Date.now() - enrichGenerationStartTime);
-    }, 1000);
+    enrichTimer.start();
 
     var accountName = loadedArchive.account.name;
 
@@ -1381,11 +1404,14 @@
       var totalEntries = archive.entries.length;
       var coverage = totalEntries === 0 ? 'none' : (matchedCount === totalEntries ? 'full' : (matchedCount > 0 ? 'partial' : 'none'));
 
-      if(!archive.manifest) archive.manifest = {};
+      // archive.manifest is guaranteed to exist and be complete here —
+      // isValidHiveLegacyArchive() already rejected anything without one.
       archive.manifest.transactions = coverage;
       archive.manifest.blocks = coverage;
-      if(coverage === 'full' || coverage === 'partial'){
-        archive.manifest.titles = (archive.manifest.titles === 'full') ? 'full' : (coverage === 'full' ? 'full' : 'partial');
+      if(coverage === 'full'){
+        archive.manifest.titles = 'full';
+      } else if(coverage === 'partial' && archive.manifest.titles !== 'full'){
+        archive.manifest.titles = 'partial';
       }
 
       archive.enrichment = {
@@ -1396,8 +1422,7 @@
 
       enrichedArchive = archive;
 
-      clearInterval(enrichTimerInterval);
-      enrichLastElapsedLabel = formatElapsed(Date.now() - enrichGenerationStartTime);
+      var elapsedLabel = enrichTimer.stop();
       enrichProgressLabel.textContent = 'Done.';
 
       setTimeout(function(){
@@ -1407,19 +1432,14 @@
         enrichResultCard.classList.add('show');
         enrichResultSummary.textContent = matchedCount.toLocaleString() + ' of ' + totalEntries.toLocaleString() +
           ' entries enriched with transaction/block data (' + titleUpgradedCount.toLocaleString() + ' titles upgraded to full text) in ' +
-          enrichLastElapsedLabel + '. Ready to download.';
+          elapsedLabel + '. Ready to download.';
         enrichBtn.disabled = false;
       }, 400);
 
     }).catch(function(err){
-      clearInterval(enrichTimerInterval);
+      enrichTimer.stop();
       cancelEnrichBtn.style.display = 'none';
-      enrichProgressFill.classList.add('stopped');
-      if(err.message === 'Cancelled.'){
-        enrichProgressLabel.textContent = 'Cancelled.';
-      } else {
-        enrichProgressLabel.textContent = 'Error: ' + err.message;
-      }
+      markProgressStopped(enrichProgressFill, enrichProgressLabel, err);
       enrichBtn.disabled = false;
       console.error(err);
     });
@@ -1431,16 +1451,8 @@
 
   enrichDownloadBtn.addEventListener('click', function(){
     if(!enrichedArchive) return;
-    var blob = new Blob([JSON.stringify(enrichedArchive, null, 2)], { type: 'application/json' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
     var dateStr = new Date().toISOString().split('T')[0];
-    a.href = url;
-    a.download = 'hive-legacy-' + enrichedArchive.account.name + '-enriched-' + dateStr + '.json';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadJson(enrichedArchive, 'hive-legacy-' + enrichedArchive.account.name + '-enriched-' + dateStr + '.json');
   });
 
   enrichResetBtn.addEventListener('click', resetEnrichFlow);
