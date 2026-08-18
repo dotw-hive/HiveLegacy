@@ -108,4 +108,4 @@ Both tools use a fallback list of public API nodes with automatic retry if one f
 
 ## License
 
-MIT (or update to match your other `dotw-hive` repos)
+MIT — see [`LICENSE`](./LICENSE).
