@@ -1168,7 +1168,10 @@
 
   function manifestBadge(value){
     var cls = value === 'full' ? 'mf-full' : (value === 'partial' ? 'mf-partial' : 'mf-none');
-    return '<span class="' + cls + '">' + value + '</span>';
+    var span = document.createElement('span');
+    span.className = cls;
+    span.textContent = value;
+    return span;
   }
 
   // Mirrors the required fields/shapes in hive-legacy.schema.json. Kept as a
@@ -1220,10 +1223,17 @@
     return true;
   }
 
+  var MAX_ARCHIVE_FILE_BYTES = 50 * 1024 * 1024; // 50MB — generous headroom; real archives run well under 1MB even at 3,000+ entries
+
   function handleArchiveFile(file){
     setEnrichFileError(null);
     enrichPreviewCard.classList.remove('show');
     enrichResultCard.classList.remove('show');
+
+    if(file.size > MAX_ARCHIVE_FILE_BYTES){
+      setEnrichFileError('That file is too large (' + Math.round(file.size / 1024 / 1024) + 'MB, max 50MB) to be a valid Hive Legacy archive.');
+      return;
+    }
 
     var reader = new FileReader();
     reader.onload = function(){
@@ -1250,10 +1260,14 @@
 
       var m = parsed.manifest || {};
       var mfFields = ['transactions', 'blocks', 'titles'];
-      var mfHtml = mfFields.map(function(f){
-        return f + ': ' + manifestBadge(m[f] || 'none');
-      }).join(' &nbsp;·&nbsp; ');
-      enrichManifestPreview.innerHTML = mfHtml;
+      enrichManifestPreview.textContent = '';
+      mfFields.forEach(function(f, i){
+        if(i > 0){
+          enrichManifestPreview.appendChild(document.createTextNode('\u00A0\u00B7\u00A0'));
+        }
+        enrichManifestPreview.appendChild(document.createTextNode(f + ': '));
+        enrichManifestPreview.appendChild(manifestBadge(m[f] || 'none'));
+      });
 
       enrichLargeAccountNotice.classList.remove('show');
       rpcCall("condenser_api.get_accounts", [[parsed.account.name]]).then(function(result){
