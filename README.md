@@ -23,12 +23,12 @@ The goal is to help preserve:
 
 Single file, no dependencies, no build step. Either:
 
-- Open `index.html` directly in a browser, or
+- Open `hivelegacy.html` directly in a browser, or
 - Serve it locally to avoid `file://` quirks around blob downloads in some browsers:
   ```
   python3 -m http.server 8000
   ```
-  then visit `http://localhost:8000/index.html`
+  then visit `http://localhost:8000/hivelegacy.html`
 
 It also runs as a drop-in static file on any host, same as HiveWrite and HiveDrop. No login, no Keychain, no write access to the chain — this only ever reads public data.
 

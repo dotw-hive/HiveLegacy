@@ -689,6 +689,7 @@
       nodeIndex++;
 
       var timedOut = false;
+      var rpcError = null;
       var controller = new AbortController();
       var timeoutId = setTimeout(function(){
         timedOut = true;
@@ -713,12 +714,21 @@
         if(!res.ok) throw new Error("HTTP " + res.status);
         return res.json();
       }).then(function(json){
-        if(json.error) throw new Error(json.error.message || "RPC error");
+        // A JSON body with `error` is the node answering (unknown account,
+        // rejected params, and so on), not a dead node. Hand that message
+        // back immediately; only transport failures fail over.
+        if(json.error){
+          rpcError = new Error(json.error.message || "RPC error");
+          throw rpcError;
+        }
         return json.result;
       }).catch(function(err){
         cleanup();
         if(externalSignal && externalSignal.aborted){
           throw new Error(CANCELLED_MESSAGE);
+        }
+        if(rpcError){
+          throw rpcError;
         }
         var reason = timedOut ? ("timed out after " + (REQUEST_TIMEOUT_MS / 1000) + "s") : err.message;
         console.warn("Node failed (" + node + "):", reason);
