@@ -766,6 +766,7 @@
     lookupAbortController = null;
     generateAbortController = null;
     lookupBtn.disabled = false;
+    lookupBtn.textContent = 'Look Up';
     cancelLookupBtn.style.display = 'none';
     cancelGenerateBtn.style.display = 'none';
     previewCard.classList.remove('show');
@@ -792,6 +793,10 @@
   });
 
   function doLookup(){
+    // Enter reaches here without clicking the button, so honor the same
+    // disabled state: no new lookup while one is in flight or Generate is running.
+    if(lookupBtn.disabled) return;
+
     var uname = usernameInput.value.trim().toLowerCase().replace(/^@/, '');
     if(!uname){
       setError('Enter a username first.');
@@ -811,16 +816,27 @@
     generatePace.set('fast');
     currentArchive = null;
 
-    lookupAbortController = new AbortController();
-    var signal = lookupAbortController.signal;
+    if(lookupAbortController){ lookupAbortController.abort(); }
+    var controller = new AbortController();
+    lookupAbortController = controller;
+    var signal = controller.signal;
+
+    // A superseded lookup (a newer lookup, or reset) must not touch the UI.
+    // Generate also disables Look Up for its whole run; a lookup that was
+    // already in flight must not turn that button back on early.
+    function settleLookup(){
+      if(lookupAbortController !== controller) return false;
+      lookupBtn.textContent = 'Look Up';
+      cancelLookupBtn.style.display = 'none';
+      if(!generateBtn.disabled) lookupBtn.disabled = false;
+      return true;
+    }
 
     Promise.all([
       rpcCall("condenser_api.get_accounts", [[uname]], signal),
       rpcCall("bridge.get_profile", { account: uname }, signal).catch(function(){ return null; })
     ]).then(function(results){
-      lookupBtn.disabled = false;
-      lookupBtn.textContent = 'Look Up';
-      cancelLookupBtn.style.display = 'none';
+      if(!settleLookup()) return;
       var result = results[0];
       var profile = results[1];
       if(!result || result.length === 0){
@@ -850,9 +866,7 @@
       statRep.textContent = (repScore !== null) ? repScore : '—';
       previewCard.classList.add('show');
     }).catch(function(err){
-      lookupBtn.disabled = false;
-      lookupBtn.textContent = 'Look Up';
-      cancelLookupBtn.style.display = 'none';
+      if(!settleLookup()) return;
       if(err.message === CANCELLED_MESSAGE){
         setError('Lookup cancelled.');
       } else {
@@ -924,6 +938,11 @@
 
   generateBtn.addEventListener('click', function(){
     if(!currentUsername) return;
+    // Comments are fetched only after posts return, so a lookup that lands
+    // in between must not switch the account mid-archive. Pin both fields
+    // for every phase, the archive, and the result line (download uses the archive).
+    var runUsername = currentUsername;
+    var runAccountCreated = currentAccountCreated;
     generateBtn.disabled = true;
     lookupBtn.disabled = true;
     cancelGenerateBtn.style.display = 'inline-block';
@@ -943,12 +962,12 @@
       progressLabel.textContent = 'Fetched ' + totalCollected.posts + ' posts, ' + totalCollected.comments + ' comments so far...';
     }
 
-    fetchAllPosts(currentUsername, 'posts', pace, signal, function(count){
+    fetchAllPosts(runUsername, 'posts', pace, signal, function(count){
       totalCollected.posts = count;
       updateProgress();
     }).then(function(rawPosts){
       progressLabel.textContent = 'Fetching comments...';
-      return fetchAllPosts(currentUsername, 'comments', pace, signal, function(count){
+      return fetchAllPosts(runUsername, 'comments', pace, signal, function(count){
         totalCollected.comments = count;
         updateProgress();
       }).then(function(rawComments){
@@ -1007,8 +1026,8 @@
         generator: "Hive Legacy MVP",
         enrichment: null,
         account: {
-          name: currentUsername,
-          created: currentAccountCreated
+          name: runUsername,
+          created: runAccountCreated
         },
         manifest: {
           account_metadata: "full",
@@ -1041,7 +1060,7 @@
         previewCard.classList.remove('show');
         resultCard.classList.add('show');
         resultSummary.textContent = postCount.toLocaleString() + ' posts and ' + commentCount.toLocaleString() +
-          ' comments indexed for @' + currentUsername + ' in ' + elapsedLabel + '. Ready to download.';
+          ' comments indexed for @' + runUsername + ' in ' + elapsedLabel + '. Ready to download.';
         generateBtn.disabled = false;
         lookupBtn.disabled = false;
       }, 400);
